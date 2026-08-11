@@ -1,3 +1,26 @@
+Version 8.7.0 (Mezame no Uta)
+-----------------------------
+[Fixed] Pressing Stop then Start again did nothing, the encoding worker was disposed by Stop and could never be reused. Start now works after a Stop.
+[Fixed] Stop no longer aborts the worker thread mid-write. Encoding unwinds cleanly between stages and the running encoder process is terminated properly.
+[Fixed] Encoding progress percentage and ETA showed garbage when the encoder reported an unparseable frame count, a failed parse used to reset the total frame count to zero and divide by it.
+[Fixed] Progress line now omits the percentage and ETA instead of showing nonsense when the total frame count is genuinely unknown (multi-pass, some sources).
+[Fixed] Pressing Stop while an encoder process was starting could crash with a collection modified error.
+[Fixed] AVX / AVX2 CPU check never actually stopped the program, an unsupported CPU carried straight on into startup.
+[Fixed] Startup continued past the "no encoder available" dialog instead of closing.
+[Fixed] Splash screen fade read and wrote window opacity from a background thread, racing its own updates.
+[Fixed] Bundled ffmpeg and MP4Box lookup no longer depends on the process working directory, which a file dialog could move.
+[Fixed] Importing a batch of files silently skipped the remainder if the progress dialog was closed. A file that fails to read is now logged and the import continues.
+[Update] Selecting a queue item is now instant. Each selection used to start a thread that slept 50 ms before updating the panel, which also let rapid clicking display the wrong item's settings.
+[Update] Encoder log output is batched and flushed on a timer instead of one blocking marshalled call per line, so a chatty encoder no longer stalls the interface. Console is capped at 5000 lines.
+[Update] Window resizing is roughly 22% cheaper, banner artwork is decoded once and cached instead of being reloaded and rescaled on every resize event.
+[Update] File list columns now scale with DPI and shrink as well as grow, previously they only grew beyond a hardcoded 1000 pixel width.
+[Update] Importing files now runs media probing off the interface thread for real, previously the work was marshalled straight back onto it.
+[Update] Removed the fixed 1.5 second wait after every encoded file and the 0.5 second wait before muxing. IFME now waits for the encoder to actually release the file, which is both correct and faster on large batches.
+[Update] Tab pre-loading no longer sleeps 100 ms per tab at startup.
+[Update] Encoding engine no longer references the interface at all, it reports through a small interface instead. Groundwork for headless and command line operation.
+[Update] Timers, cached artwork and the splash image are now disposed on close.
+[Update] Removed BackgroundWorker2, its Thread.Abort based cancellation is unsupported on modern .NET and blocked any future runtime upgrade.
+
 Version 8.6.3 (Lettersong)
 --------------------------
 [Fixed] Create output folder if not exist.
