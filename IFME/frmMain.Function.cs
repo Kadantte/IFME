@@ -221,6 +221,22 @@ namespace IFME
             public int AudioChannel;
         }
 
+        /// <summary>
+        /// Reads the plugin GUID out of a data-bound encoder combo. Returns null when the
+        /// combo is unbound, which happens whenever the chosen container supports no codec
+        /// of that kind: ShowSupportedCodec sets DataSource to null and SelectedItem with it.
+        /// Unboxing that null throws NullReferenceException, not InvalidCastException.
+        /// </summary>
+        private static Guid? SelectedPluginId(ComboBox combo)
+        {
+            return combo.SelectedItem is KeyValuePair<Guid, string> kv ? kv.Key : (Guid?)null;
+        }
+
+        private static int SelectedIntKey(ComboBox combo, int fallback = 0)
+        {
+            return combo.SelectedItem is KeyValuePair<int, string> kv ? kv.Key : fallback;
+        }
+
         private QueueDefaults CaptureQueueDefaults()
         {
             return new QueueDefaults
@@ -228,7 +244,9 @@ namespace IFME
                 OutputFormat = (FileContainer)cboFormat.SelectedIndex,
                 ProfileId = cboProfile.SelectedIndex,
 
-                VideoEncoderId = ((KeyValuePair<Guid, string>)cboVideoEncoder.SelectedItem).Key,
+                // Falls back to the copy-stream codec when the combo is unbound. That happens
+                // on audio-only containers, where no video stream is encoded anyway.
+                VideoEncoderId = SelectedPluginId(cboVideoEncoder) ?? Guid.Empty,
                 VideoPreset = cboVideoPreset.Text,
                 VideoTune = cboVideoTune.Text,
                 VideoRateControl = cboVideoRateControl.SelectedIndex,
@@ -239,11 +257,11 @@ namespace IFME
                 DeInterlaceMode = cboVideoDeInterMode.SelectedIndex,
                 DeInterlaceField = cboVideoDeInterField.SelectedIndex,
 
-                AudioEncoderId = ((KeyValuePair<Guid, string>)cboAudioEncoder.SelectedItem).Key,
+                AudioEncoderId = SelectedPluginId(cboAudioEncoder) ?? Guid.Empty,
                 AudioMode = cboAudioMode.SelectedIndex,
                 AudioQuality = cboAudioQuality.Text,
-                AudioSampleRate = ((KeyValuePair<int, string>)cboAudioSampleRate.SelectedItem).Key,
-                AudioChannel = ((KeyValuePair<int, string>)cboAudioChannel.SelectedItem).Key
+                AudioSampleRate = SelectedIntKey(cboAudioSampleRate),
+                AudioChannel = SelectedIntKey(cboAudioChannel)
             };
         }
 
@@ -1070,8 +1088,20 @@ namespace IFME
         {
             var newVideoCodec = new Dictionary<Guid, PluginsVideo>();
             var newAudioCodec = new Dictionary<Guid, PluginsAudio>();
-            var idVideo = ((KeyValuePair<Guid, string>)cboVideoEncoder.SelectedItem).Key;
-            var idAudio = ((KeyValuePair<Guid, string>)cboAudioEncoder.SelectedItem).Key;
+
+            // SelectedItem is null whenever the combo was unbound by a previous call, which
+            // happens as soon as the user picks an audio-only container: no video codec
+            // matches, so DataSource is set to null below. Unboxing that null threw
+            // NullReferenceException on the next container change.
+            // Nullable rather than Guid.Empty, because Guid.Empty is a real plugin key
+            // (the copy-stream codec).
+            Guid? idVideo = cboVideoEncoder.SelectedItem is KeyValuePair<Guid, string> curVideo
+                ? curVideo.Key
+                : (Guid?)null;
+
+            Guid? idAudio = cboAudioEncoder.SelectedItem is KeyValuePair<Guid, string> curAudio
+                ? curAudio.Key
+                : (Guid?)null;
 
             foreach (var item in Plugins.Items.Video)
             {
@@ -1129,9 +1159,9 @@ namespace IFME
                     cboVideoEncoder.DataSource = new BindingSource(newDataSource, null);
                 }
 
-                if (newDataSource.ContainsKey(idVideo))
+                if (idVideo.HasValue && newDataSource.ContainsKey(idVideo.Value))
                 {
-                    cboVideoEncoder.SelectedValue = idVideo;
+                    cboVideoEncoder.SelectedValue = idVideo.Value;
                 }
                 else
                 {
@@ -1163,9 +1193,9 @@ namespace IFME
                     cboAudioEncoder.DataSource = new BindingSource(newDataSource, null);
                 }
 
-                if (newDataSource.ContainsKey(idAudio))
+                if (idAudio.HasValue && newDataSource.ContainsKey(idAudio.Value))
                 {
-                    cboAudioEncoder.SelectedValue = idAudio;
+                    cboAudioEncoder.SelectedValue = idAudio.Value;
                 }
                 else
                 {
