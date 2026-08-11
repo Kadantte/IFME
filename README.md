@@ -85,7 +85,7 @@ to saturate every core. IFME's job is to stay out of the encoder's way.
 ### Running it
 
 - **Windows** — run `IFME.exe`
-- **Linux** — run `ifme.sh` from a terminal
+- **Linux** — run `ifme_linux` from a terminal
 
 ## System requirements
 
@@ -206,7 +206,7 @@ Current translations: English, 日本語, 简体中文, Bahasa Malaysia.
 
 ## License
 
-| | |
+|   |   |
 |---|---|
 | **Source code and binaries** | [GPL-2.0](http://choosealicense.com/licenses/gpl-2.0/) |
 | **Mascots and artwork** | [CC BY-NC 4.0](http://creativecommons.org/licenses/by-nc/4.0/) — drawn by [53C](http://53c.deviantart.com/) and [adeq](https://www.facebook.com/liyana.0426), property of the IFME Project |
