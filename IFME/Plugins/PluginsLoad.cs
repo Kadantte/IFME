@@ -42,14 +42,10 @@ namespace IFME
                     // Parse into fully qualified path
                     if (Path.IsPathRooted(plugin.Audio.Encoder))
                         plugin.Audio.Encoder = Path.GetFullPath(plugin.Audio.Encoder);
-
-                    if (OS.IsProgramInPath(plugin.Audio.Encoder))
+                    else if (OS.IsProgramInPath(plugin.Audio.Encoder))
                         plugin.Version = "$PATH"; // tell the plugins in in PATH Environment
                     else
                         plugin.Audio.Encoder = Path.GetFullPath(AppPath.Combine(Path.GetDirectoryName(item), plugin.Audio.Encoder));
-
-                    if (OS.IsLinux)
-                        plugin.Audio.Encoder = Path.GetFullPath(AppPath.Combine(Path.GetDirectoryName(item), Path.GetFileNameWithoutExtension(plugin.Audio.Encoder)));
 
                     // Skip
                     if (plugin.GUID.Equals(new Guid("aaaaaaaa-0000-0000-0000-000000000000")))
@@ -142,15 +138,16 @@ namespace IFME
                     foreach (var p in plugin.Video.Encoder)
                     {
                         if (Path.IsPathRooted(p.Binary))
+                        {
                             p.Binary = Path.GetFullPath(p.Binary);
+                            continue;
+                        }
 
                         if (OS.IsProgramInPath(p.Binary))
                             plugin.Version = "$PATH"; // tell the plugins in in PATH Environment
                         else
                             p.Binary = Path.GetFullPath(AppPath.Combine(Path.GetDirectoryName(item), p.Binary));
 
-                        if (OS.IsLinux)
-                            p.Binary = Path.GetFullPath(AppPath.Combine(Path.GetDirectoryName(item), Path.GetFileNameWithoutExtension(p.Binary)));
                     }
 
                     // Skip
