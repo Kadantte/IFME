@@ -52,12 +52,20 @@ namespace IFME
 
         protected override void OnFormClosed(FormClosedEventArgs e)
         {
+            fadeTimer?.Stop();
+            fadeTimer?.Dispose();
+            fadeTimer = null;
+
             splashImage?.Dispose();
+            splashImage = null;
+
+            frmSplashScreenStatus = null;
+
             base.OnFormClosed(e);
         }
 
 
-        private BackgroundWorker2 bgThread = new BackgroundWorker2();
+        private readonly BackgroundWorker bgThread = new BackgroundWorker();
 
         public frmSplashScreen()
         {
@@ -79,6 +87,7 @@ namespace IFME
 
         private void frmSplashScreen_Shown(object sender, EventArgs e)
         {
+            StartFade(fadeIn: true);
             bgThread.RunWorkerAsync();
         }
 
@@ -86,10 +95,6 @@ namespace IFME
         {
             lblLoadingUpdate(string.Empty);
             lblStatusUpdate(string.Empty);
-
-            Thread.Sleep(500);
-
-            frmFadeInOut(true);
 
             // Detect user machine
             // TODO: Detect user GPU
@@ -139,40 +144,54 @@ namespace IFME
             // If user choose not to test the encoder, wait little longer telling user IFME not test
             if (!Properties.Settings.Default.TestEncoder)
                 Thread.Sleep(1000);
-
-            frmFadeInOut(false);
         }
+
         private void BgThread_RunWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
         {
-            Close();
+            // Fade out on the UI thread, then close when it reaches zero.
+            StartFade(fadeIn: false);
         }
 
-        private void frmFadeInOut(bool fadeIn)
+        // Opacity is a UI property: the old version read and wrote it from a worker thread
+        // while queueing BeginInvoke mutations, so the loop condition raced its own updates.
+        private System.Windows.Forms.Timer fadeTimer;
+        private bool fadeDirectionIn;
+
+        private void StartFade(bool fadeIn)
         {
-            if (fadeIn)
-            {
-                while (Opacity < 1)
-                {
-                    BeginInvoke((Action)delegate ()
-                    {
-                        Opacity += 0.02;
-                    });
+            fadeDirectionIn = fadeIn;
 
-                    Thread.Sleep(5);
-                }
-            }
-            else
+            if (fadeTimer == null)
             {
-                while (Opacity > 0)
-                {
-                    BeginInvoke((Action)delegate ()
-                    {
-                        Opacity -= 0.02;
-                    });
-
-                    Thread.Sleep(5);
-                }
+                fadeTimer = new System.Windows.Forms.Timer { Interval = 15 };
+                fadeTimer.Tick += FadeTimer_Tick;
             }
+
+            fadeTimer.Start();
+        }
+
+        private void FadeTimer_Tick(object sender, EventArgs e)
+        {
+            if (fadeDirectionIn)
+            {
+                if (Opacity < 1)
+                {
+                    Opacity = Math.Min(1, Opacity + 0.08);
+                    return;
+                }
+
+                fadeTimer.Stop();
+                return;
+            }
+
+            if (Opacity > 0)
+            {
+                Opacity = Math.Max(0, Opacity - 0.08);
+                return;
+            }
+
+            fadeTimer.Stop();
+            Close();
         }
 
         private void lblLoadingUpdate(string value)

@@ -63,9 +63,6 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="ArgsParser.cs" />
-    <Compile Include="BackgroundWorker2.cs">
-      <SubType>Component</SubType>
-    </Compile>
     <Compile Include="MediaContainer.cs" />
     <Compile Include="Extensions.cs" />
     <Compile Include="Fonts.cs" />

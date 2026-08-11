@@ -6,6 +6,7 @@ using System.Reflection;
 using System.Windows.Forms;
 using System.ComponentModel;
 using System.Drawing.Imaging;
+using System.Drawing.Drawing2D;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
 
@@ -15,28 +16,13 @@ namespace IFME
 {
     public partial class frmMain : Form
     {
-        private BackgroundWorker2 bgThread = new BackgroundWorker2();
+        private readonly BackgroundWorker bgThread = new BackgroundWorker { WorkerSupportsCancellation = true };
         private string[] videoResolution;
 
         public frmMain()
         {
-            if (!Program.ArgsSkipAVX)
-            {
-                if (!CPU.HasAVX)
-                {
-                    MessageBox.Show("AVX instruction set not detected. A modern CPU with AVX support is required to continue. Please ensure your hardware is compatible. The program will now exit.", i18nUI.Status("Error"), MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    Application.Exit();
-                }
-            }
-
-            if (!Program.ArgsSkipAVX2)
-            {
-                if (!CPU.HasAVX2)
-                {
-                    MessageBox.Show("AVX2 instruction set not detected. A modern CPU with AVX2 support is required to continue. Please ensure your hardware is compatible.", i18nUI.Status("Error"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                }
-            }
-
+            // CPU capability checks moved to Program.Main: Application.Exit() here did nothing
+            // because the message loop had not started yet, so startup continued regardless.
             new frmSplashScreen().ShowDialog(); // loading, init all inside that
 
             frmMainStatic = this;
@@ -111,7 +97,11 @@ namespace IFME
                 var msg = i18nUI.Dialog("NoEncoderAvailableMsg1");
 
                 MessageBox.Show(msg, hed, MessageBoxButtons.OK, MessageBoxIcon.Error);
-                Application.Exit();
+
+                // Bail out of Load as well: Application.Exit() only posts a close request,
+                // so the rest of this method used to keep running against empty plugin lists.
+                Close();
+                return;
             }
 
             var c = 0;
@@ -124,6 +114,27 @@ namespace IFME
 
             InitializeProfiles();
             InitializeLog();
+            InitializeLogPump();
+        }
+
+        protected override void OnFormClosed(FormClosedEventArgs e)
+        {
+            logPumpTimer?.Stop();
+            logPumpTimer?.Dispose();
+            logPumpTimer = null;
+
+            PbxBanner.BackgroundImage?.Dispose();
+            PbxBanner.BackgroundImage = null;
+
+            bannerLeft?.Dispose();
+            bannerLeft = null;
+
+            bannerRight?.Dispose();
+            bannerRight = null;
+
+            frmMainStatic = null;
+
+            base.OnFormClosed(e);
         }
 
         private void frmMain_Shown(object sender, EventArgs e)
@@ -131,54 +142,103 @@ namespace IFME
             InitializeTab(); // need loop all table to make controls respond
         }
 
+        // Banner sources are decoded once and reused. Reloading and rescaling them on every
+        // SizeChanged made drag-resizing expensive, and none of the intermediate bitmaps
+        // were disposed, so a long drag leaked GDI handles until the process ran out.
+        private Image bannerLeft;
+        private Image bannerRight;
+
         private void frmMain_SizeChanged(object sender, EventArgs e)
+        {
+            RebuildBanner();
+            ResizeFileColumns();
+        }
+
+        private void RebuildBanner()
         {
             var w = PbxBanner.Width;
             var h = PbxBanner.Height;
 
-            var b1 = WAD.Resource.LoadImage("Banner_4a.png");
-            var b2 = WAD.Resource.LoadImage("Banner_2b.png");
-            var iW = b1.Width;
-            var iH = b1.Height;
+            if (w <= 0 || h <= 0)
+                return;
 
-            var p = h / (double)iH;
-
-            var nW = iW * p;
-            var nH = iH * p;
-
-            var bL = Images.Resize(b1, (int)nW, (int)nH);
-            var bR = Images.Resize(b2, (int)nW, (int)nH);
             try
             {
-                if (w <= 0 || h <= 0)
+                if (bannerLeft == null)
+                    bannerLeft = WAD.Resource.LoadImage("Banner_4a.png");
+
+                if (bannerRight == null)
+                    bannerRight = WAD.Resource.LoadImage("Banner_2b.png");
+
+                if (bannerLeft.Height <= 0)
                     return;
 
-                using (var png = new Bitmap(w, h, PixelFormat.Format32bppArgb))
-                {
-                    using (var img = Graphics.FromImage(png))
-                    {
-                        img.DrawImage(new Bitmap(bL), 0, 0);
-                        img.DrawImage(new Bitmap(bR), w - (int)nW, 0);
-                    }
+                var scale = h / (double)bannerLeft.Height;
+                var nW = Math.Max(1, (int)(bannerLeft.Width * scale));
+                var nH = Math.Max(1, (int)(bannerLeft.Height * scale));
 
-                    PbxBanner.BackgroundImage = new Bitmap(png);
+                var composed = new Bitmap(w, h, PixelFormat.Format32bppArgb);
+
+                using (var img = Graphics.FromImage(composed))
+                {
+                    img.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                    img.PixelOffsetMode = PixelOffsetMode.HighQuality;
+
+                    // Scale straight into the destination rectangle: no intermediate
+                    // resized bitmaps to allocate and forget about.
+                    img.DrawImage(bannerLeft, new Rectangle(0, 0, nW, nH));
+                    img.DrawImage(bannerRight, new Rectangle(w - nW, 0, nW, nH));
                 }
 
-                if (lstFile.Width > 1000)
-                {
-                    var pWidthInc = (((float)lstFile.Width - 1000) / 1000);
-
-                    colFileName.Width = (int)Math.Ceiling((250 * pWidthInc) + 250);
-                    colFileType.Width = (int)(90 * pWidthInc) + 90;
-                    colFileDuration.Width = (int)(72 * pWidthInc) + 72;
-                    colFileSize.Width = (int)(64 * pWidthInc) + 64;
-                    colFileStatus.Width = (int)(110 * pWidthInc) + 110;
-                    colFileProgress.Width = (int)Math.Ceiling((390 * pWidthInc) + 390);
-                }
+                var previous = PbxBanner.BackgroundImage;
+                PbxBanner.BackgroundImage = composed;
+                previous?.Dispose();
             }
-            catch (Exception)
+            catch (Exception ex)
             {
+                PrintLog(String.Format(i18nUI.Log("ErrorInfo"), "RebuildBanner()", ex.Message));
+            }
+        }
 
+        /// <summary>
+        /// Keeps the narrow columns at a readable fixed (DPI-scaled) width and lets the
+        /// filename and progress columns absorb the remaining space. The old version only
+        /// grew columns past a hardcoded 1000px and never shrank them.
+        /// </summary>
+        private void ResizeFileColumns()
+        {
+            try
+            {
+                var available = lstFile.ClientSize.Width;
+
+                if (available <= 0)
+                    return;
+
+                var dpi = DeviceDpi / 96.0;
+
+                var typeW = (int)(90 * dpi);
+                var durW = (int)(72 * dpi);
+                var sizeW = (int)(64 * dpi);
+                var statW = (int)(110 * dpi);
+
+                colFileType.Width = typeW;
+                colFileDuration.Width = durW;
+                colFileSize.Width = sizeW;
+                colFileStatus.Width = statW;
+
+                var remaining = available - (typeW + durW + sizeW + statW);
+
+                if (remaining < (int)(200 * dpi))
+                    remaining = (int)(200 * dpi);
+
+                var nameW = Math.Max((int)(120 * dpi), (int)(remaining * 0.40));
+
+                colFileName.Width = nameW;
+                colFileProgress.Width = Math.Max((int)(160 * dpi), remaining - nameW);
+            }
+            catch (Exception ex)
+            {
+                PrintLog(String.Format(i18nUI.Log("ErrorInfo"), "ResizeFileColumns()", ex.Message));
             }
         }
 
@@ -324,7 +384,14 @@ namespace IFME
 
                     if (data.Count > 0)
                     {
-                        bgThread.RunWorkerAsync(data);
+                        btnStop.Enabled = true;
+
+                        // Arm a fresh cancellation token for this run, otherwise a previous
+                        // Stop would leave the token permanently cancelled.
+                        ProcessManager.Reset();
+
+                        // Snapshot the output path here: the worker thread must not touch controls.
+                        bgThread.RunWorkerAsync(new EncodeJob(data, txtOutputPath.Text));
                     }
                     else
                     {
@@ -348,12 +415,17 @@ namespace IFME
 
         private void btnStop_Click(object sender, EventArgs e)
         {
-            if (bgThread.IsBusy)
-            {
-                bgThread.Abort();
-                bgThread.Dispose();
-                ProcessManager.Stop();
-            }
+            if (!bgThread.IsBusy)
+                return;
+
+            // Signal cancellation and kill the running child process. The worker unwinds
+            // between pipeline stages instead of being torn down mid-write by Thread.Abort,
+            // and bgThread stays usable so Start works again afterwards.
+            bgThread.CancelAsync();
+            ProcessManager.Stop();
+
+            btnStop.Enabled = false;
+            PrintLog(i18nUI.Log("OperationCanceled"));
         }
 
         private void lstFile_ItemChecked(object sender, ItemCheckedEventArgs e)
@@ -2539,12 +2611,43 @@ namespace IFME
             }
         }
 
+        /// <summary>
+        /// Everything the worker thread needs, captured on the UI thread before it starts.
+        /// </summary>
+        private sealed class EncodeJob
+        {
+            public EncodeJob(Dictionary<int, MediaQueue> queue, string outputPath)
+            {
+                Queue = queue;
+                OutputPath = outputPath;
+            }
+
+            public Dictionary<int, MediaQueue> Queue { get; }
+            public string OutputPath { get; }
+        }
+
         private void bgThread_DoWork(object sender, DoWorkEventArgs e)
         {
-            var data = e.Argument as Dictionary<int, MediaQueue>;
+            try
+            {
+                RunEncodeQueue((EncodeJob)e.Argument);
+            }
+            catch (OperationCanceledException)
+            {
+                // Raised by ProcessManager when the user pressed Stop.
+                e.Cancel = true;
+            }
+        }
+
+        private void RunEncodeQueue(EncodeJob job)
+        {
+            var data = job.Queue;
+            var outputPath = job.OutputPath;
 
             foreach (var item in data)
             {
+                ProcessManager.Token.ThrowIfCancellationRequested();
+
                 var id = item.Key;
                 var mq = item.Value;
 
@@ -2586,7 +2689,7 @@ namespace IFME
                     var saveFileName = $"{outFileName}.{outFileExts}";
                     var r = 1;
 
-                    while (File.Exists(AppPath.Combine(txtOutputPath.Text, saveFileName)))
+                    while (File.Exists(AppPath.Combine(outputPath, saveFileName)))
                     {
                         saveFileName = $"{outFileName}_{++r}.{outFileExts}";
                     }
@@ -2595,24 +2698,25 @@ namespace IFME
                     var tempSes = AppPath.Combine(Properties.Settings.Default.FolderTemporary, $"{Guid.NewGuid()}");
                     Directory.CreateDirectory(tempSes);
 
-
-
                     // Extract
                     MediaEncoding.Extract(mq, tempSes);
+                    ProcessManager.Token.ThrowIfCancellationRequested();
 
                     // Audio
                     MediaEncoding.Audio(mq, tempSes);
+                    ProcessManager.Token.ThrowIfCancellationRequested();
 
                     // Video
                     MediaEncoding.Video(mq, tempSes);
+                    ProcessManager.Token.ThrowIfCancellationRequested();
 
                     // Mux
-                    var errCodeMux = MediaEncoding.Muxing(mq, tempSes, txtOutputPath.Text, saveFileName);
+                    var errCodeMux = MediaEncoding.Muxing(mq, tempSes, outputPath, saveFileName);
 
                     // Check FFmpeg Muxing is failed (negative) or 1 or sucess/warning (positive)
                     if (errCodeMux <= -1 || errCodeMux == 1)
                     {
-                        Extensions.DirectoryCopy(tempSes, AppPath.Combine(txtOutputPath.Text, "[Muxing Failed]", $"{saveFileName}"), true);
+                        Extensions.DirectoryCopy(tempSes, AppPath.Combine(outputPath, "[Muxing Failed]", $"{saveFileName}"), true);
                         PrintLog(i18nUI.Log("MuxingFailed"));
                         PrintLog(String.Format(i18nUI.Log("FFmpegReturnCode"), errCodeMux));
                     }
@@ -2629,17 +2733,14 @@ namespace IFME
                     lstFile.Invoke((MethodInvoker)delegate
                     {
                         lstFile.Items[id].Checked = false;
-                        lstFile.Items[id].SubItems[4].Text = i18nUI.Status("Done");
-                        lstFile.Items[id].SubItems[5].Text = String.Format(i18nUI.Status("Complete"), $"{DateTime.Now.Subtract(tt):dd\\:hh\\:mm\\:ss}");
                     });
+
+                    SetRowStatus(id, i18nUI.Status("Done"),
+                        String.Format(i18nUI.Status("Complete"), $"{DateTime.Now.Subtract(tt):dd\\:hh\\:mm\\:ss}"));
                 }
                 else
                 {
-                    lstFile.Invoke((MethodInvoker)delegate
-                    {
-                        lstFile.Items[id].SubItems[4].Text = i18nUI.Status("Skip");
-                        lstFile.Items[id].SubItems[5].Text = string.Empty;
-                    });
+                    SetRowStatus(id, i18nUI.Status("Skip"), string.Empty);
                 }
             }
         }
@@ -2652,13 +2753,17 @@ namespace IFME
         private void bgThread_RunWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
         {
             btnStart.Text = "►";
+            btnStop.Enabled = true;
 
             ProcessManager.Clear();
 
+            if (e.Error != null)
+            {
+                PrintLog(String.Format(i18nUI.Log("ErrorInfo"), "Encoding", e.Error.Message));
+            }
+
             if (e.Cancelled)
             {
-                frmMain.PrintLog(i18nUI.Log("OperationCanceled"));
-
                 foreach (ListViewItem item in lstFile.Items)
                 {
                     item.SubItems[4].Text = i18nUI.Status("Abort");
@@ -2666,7 +2771,7 @@ namespace IFME
                 }
             }
 
-            if (!e.Cancelled && tsmiPowerOff.Checked)
+            if (!e.Cancelled && e.Error == null && tsmiPowerOff.Checked)
             {
                 frmMain.PrintLog(i18nUI.Log("OperationCompleteShutdown"));
                 OS.PowerOff(3);

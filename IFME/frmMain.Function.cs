@@ -25,6 +25,11 @@ namespace IFME
 
     public partial class frmMain
     {
+        // Guards against re-entrancy: assigning SelectedIndex/SelectedValue below raises
+        // SelectedIndexChanged synchronously, and some of those handlers call back into
+        // DisplayProperties_*. Previously the BeginInvoke deferral hid this; now it is explicit.
+        private bool suspendPropertyEvents;
+
         private void Initialize_i18n()
         {
             var lang = Properties.Settings.Default.UILanguage;
@@ -89,7 +94,7 @@ namespace IFME
 
         private void InitializeTab()
         {
-            new Thread(Thread_InitializedTabs).Start();
+            InitializeTabLayout();
         }
 
         private void UpdateComboBoxItems(ComboBox combo, string[] newItems, ComboBoxStyle style)
@@ -165,51 +170,139 @@ namespace IFME
             return Array.Empty<string>();
         }
 
+        /// <summary>
+        /// Snapshot of the encoder defaults currently shown in the UI. Taken once on the UI
+        /// thread so queue construction can run on a worker without touching controls.
+        /// </summary>
+        private sealed class QueueDefaults
+        {
+            public FileContainer OutputFormat;
+            public int ProfileId;
+
+            public Guid VideoEncoderId;
+            public string VideoPreset;
+            public string VideoTune;
+            public int VideoRateControl;
+            public decimal VideoRateFactor;
+            public int VideoMultiPass;
+
+            public bool DeInterlaceEnable;
+            public int DeInterlaceMode;
+            public int DeInterlaceField;
+
+            public Guid AudioEncoderId;
+            public int AudioMode;
+            public string AudioQuality;
+            public int AudioSampleRate;
+            public int AudioChannel;
+        }
+
+        private QueueDefaults CaptureQueueDefaults()
+        {
+            return new QueueDefaults
+            {
+                OutputFormat = (FileContainer)cboFormat.SelectedIndex,
+                ProfileId = cboProfile.SelectedIndex,
+
+                VideoEncoderId = ((KeyValuePair<Guid, string>)cboVideoEncoder.SelectedItem).Key,
+                VideoPreset = cboVideoPreset.Text,
+                VideoTune = cboVideoTune.Text,
+                VideoRateControl = cboVideoRateControl.SelectedIndex,
+                VideoRateFactor = nudVideoRateFactor.Value,
+                VideoMultiPass = (int)nudVideoMultiPass.Value,
+
+                DeInterlaceEnable = chkVideoDeInterlace.Checked,
+                DeInterlaceMode = cboVideoDeInterMode.SelectedIndex,
+                DeInterlaceField = cboVideoDeInterField.SelectedIndex,
+
+                AudioEncoderId = ((KeyValuePair<Guid, string>)cboAudioEncoder.SelectedItem).Key,
+                AudioMode = cboAudioMode.SelectedIndex,
+                AudioQuality = cboAudioQuality.Text,
+                AudioSampleRate = ((KeyValuePair<int, string>)cboAudioSampleRate.SelectedItem).Key,
+                AudioChannel = ((KeyValuePair<int, string>)cboAudioChannel.SelectedItem).Key
+            };
+        }
+
         private void ImportFiles(string[] files)
         {
-            var frm = new frmProgressBar();
+            if (files == null || files.Length == 0)
+                return;
 
             lstFile.SelectedIndices.Clear();
 
-            frm.Show();
+            var defaults = CaptureQueueDefaults();
+
+            var frm = new frmProgressBar();
+            frm.Show(this);
             frm.Text = i18nUI.Dialog("Importing");
             frm.Status = i18nUI.Dialog("Indexing");
 
-            var thread = new BackgroundWorker();
+            var thread = new BackgroundWorker { WorkerReportsProgress = true };
 
             thread.DoWork += delegate (object o, DoWorkEventArgs r)
             {
+                var worker = (BackgroundWorker)o;
+
                 for (int i = 0; i < files.Length; i++)
                 {
-                    if (InvokeRequired)
-                    {
-                        if (frm.Visible)
-                        {
-                            Invoke(new MethodInvoker(delegate
-                            {
-                                MediaFileListAdd(files[i], false);
-                                frm.Progress = (int)(((float)(i + 1) / files.Length) * 100.0);
-                                frm.Status = String.Format(i18nUI.Dialog("ImportStatus"), i + 1, files.Length, files[i]);
-                                frm.Title = String.Format(i18nUI.Dialog("ImportTitle"), frm.Progress);
-                            }));
-                        }
-                    }
-                }
+                    var path = files[i];
 
-                Thread.Sleep(500);
-                frm.ProgBarStyle = ProgressBarStyle.Marquee;
-                Thread.Sleep(999);
+                    // The expensive part (ffprobe via FFmpeg.MediaInfo) genuinely runs here,
+                    // off the UI thread. Only the ListViewItem insert is marshalled back.
+                    try
+                    {
+                        var item = BuildMediaQueue(path, false, string.Empty, defaults);
+
+                        Invoke(new MethodInvoker(delegate
+                        {
+                            MediaFileListInsert(item, path, defaults);
+                        }));
+                    }
+                    catch (Exception ex)
+                    {
+                        // Report and carry on: one unreadable file must not abort the import.
+                        PrintLog(String.Format(i18nUI.Log("ErrorInfo"), Path.GetFileName(path), ex.Message));
+                    }
+
+                    worker.ReportProgress((int)(((float)(i + 1) / files.Length) * 100.0),
+                        new object[] { i + 1, files.Length, path });
+                }
+            };
+
+            thread.ProgressChanged += delegate (object o, ProgressChangedEventArgs r)
+            {
+                var state = (object[])r.UserState;
+
+                frm.Progress = r.ProgressPercentage;
+                frm.Status = String.Format(i18nUI.Dialog("ImportStatus"), state[0], state[1], state[2]);
+                frm.Title = String.Format(i18nUI.Dialog("ImportTitle"), r.ProgressPercentage);
             };
 
             thread.RunWorkerCompleted += delegate (object o, RunWorkerCompletedEventArgs r)
             {
+                if (r.Error != null)
+                    PrintLog(String.Format(i18nUI.Log("ErrorInfo"), "ImportFiles()", r.Error.Message));
+
                 frm.Close();
+                frm.Dispose();
+
+                thread.Dispose();
             };
 
             thread.RunWorkerAsync();
         }
 
         private void MediaFileListAdd(string path, bool isImages, string frameRate = "")
+        {
+            var defaults = CaptureQueueDefaults();
+            MediaFileListInsert(BuildMediaQueue(path, isImages, frameRate, defaults), path, defaults);
+        }
+
+        /// <summary>
+        /// Builds the queue entry for a file. Contains no UI access and is safe to call
+        /// from a worker thread.
+        /// </summary>
+        private static MediaQueue BuildMediaQueue(string path, bool isImages, string frameRate, QueueDefaults ui)
         {
             var fileData = new FFmpeg.MediaInfo(path, frameRate);
             var fileQueue = new MediaQueue()
@@ -220,8 +313,8 @@ namespace IFME
                 FileSize = fileData.FileSize,
                 Duration = fileData.Duration,
                 InputFormat = fileData.FormatNameFull,
-                OutputFormat = (FileContainer)cboFormat.SelectedIndex,
-                ProfileId = cboProfile.SelectedIndex,
+                OutputFormat = ui.OutputFormat,
+                ProfileId = ui.ProfileId,
                 Info = fileData
             };
 
@@ -251,12 +344,12 @@ namespace IFME
 
                     Encoder = new MediaQueueVideoEncoder
                     {
-                        Id = ((KeyValuePair<Guid, string>)cboVideoEncoder.SelectedItem).Key,
-                        Preset = cboVideoPreset.Text,
-                        Tune = cboVideoTune.Text,
-                        Mode = cboVideoRateControl.SelectedIndex,
-                        Value = nudVideoRateFactor.Value,
-                        MultiPass = (int)nudVideoMultiPass.Value,
+                        Id = ui.VideoEncoderId,
+                        Preset = ui.VideoPreset,
+                        Tune = ui.VideoTune,
+                        Mode = ui.VideoRateControl,
+                        Value = ui.VideoRateFactor,
+                        MultiPass = ui.VideoMultiPass,
                         Command = string.Empty
                     },
 
@@ -276,9 +369,9 @@ namespace IFME
 
                     DeInterlace = new MediaQueueVideoDeInterlace
                     {
-                        Enable = chkVideoDeInterlace.Checked,
-                        Mode = cboVideoDeInterMode.SelectedIndex,
-                        Field = cboVideoDeInterField.SelectedIndex
+                        Enable = ui.DeInterlaceEnable,
+                        Mode = ui.DeInterlaceMode,
+                        Field = ui.DeInterlaceField
                     }
                 });
 
@@ -299,11 +392,11 @@ namespace IFME
 
                     Encoder = new MediaQueueAudioEncoder
                     {
-                        Id = ((KeyValuePair<Guid, string>)cboAudioEncoder.SelectedItem).Key,
-                        Mode = cboAudioMode.SelectedIndex,
-                        Quality = cboAudioQuality.Text,
-                        SampleRate = ((KeyValuePair<int, string>)cboAudioSampleRate.SelectedItem).Key,
-                        Channel = ((KeyValuePair<int, string>)cboAudioChannel.SelectedItem).Key,
+                        Id = ui.AudioEncoderId,
+                        Mode = ui.AudioMode,
+                        Quality = ui.AudioQuality,
+                        SampleRate = ui.AudioSampleRate,
+                        Channel = ui.AudioChannel,
                         Command = string.Empty
                     },
 
@@ -332,19 +425,33 @@ namespace IFME
                 });
 
             // Enable HardSub (Burn Subtitle) when using incompatible container, make sure disable control
-            if ((FileContainer)cboFormat.SelectedIndex == FileContainer.MKV)
+            if (ui.OutputFormat == FileContainer.MKV)
                 fileQueue.HardSub = false;
-            else if ((FileContainer)cboFormat.SelectedIndex == FileContainer.MP4)
+            else if (ui.OutputFormat == FileContainer.MP4)
                 fileQueue.HardSub = false;
             else
                 fileQueue.HardSub = true;
 
+            return fileQueue;
+        }
+
+        /// <summary>
+        /// Adds a prepared queue entry to the list. UI thread only.
+        /// </summary>
+        private void MediaFileListInsert(MediaQueue fileQueue, string path, QueueDefaults ui)
+        {
+            if (fileQueue == null)
+                return;
+
+            var ext = Path.GetExtension(path);
+            var extName = string.IsNullOrEmpty(ext) ? "?" : ext.Substring(1).ToUpperInvariant();
+
             var lst = new ListViewItem(new[]
             {
                 Path.GetFileName(path),
-                $"{Path.GetExtension(path).Substring(1).ToUpperInvariant()} ► {Enum.GetName(typeof(FileContainer), cboFormat.SelectedIndex)}",
-                TimeSpan.FromSeconds(fileData.Duration).ToString("hh\\:mm\\:ss"),
-                OS.PrintFileSize(fileData.FileSize),
+                $"{extName} ► {Enum.GetName(typeof(FileContainer), ui.OutputFormat)}",
+                TimeSpan.FromSeconds(fileQueue.Duration).ToString("hh\\:mm\\:ss"),
+                OS.PrintFileSize(fileQueue.FileSize),
                 fileQueue.Enable ? "Ready" : "Done",
                 ""
             })
@@ -354,19 +461,8 @@ namespace IFME
                 Selected = true
             };
 
-            if (InvokeRequired)
-            {
-                Invoke(new MethodInvoker(delegate
-                {
-                    lstFile.Focus();
-                    lstFile.Items.Add(lst);
-                }));
-            }
-            else
-            {
-                lstFile.Focus();
-                lstFile.Items.Add(lst);
-            }
+            lstFile.Focus();
+            lstFile.Items.Add(lst);
         }
 
         private void MediaVideoListAdd(string path)
@@ -551,6 +647,9 @@ namespace IFME
 
         private void DisplayProperties_Video()
         {
+            if (suspendPropertyEvents)
+                return;
+
             if ((FileContainer)cboFormat.SelectedIndex >= FileContainer.MP2)
                 return;
 
@@ -559,7 +658,7 @@ namespace IFME
                 try
                 {
                     var data = (lstFile.SelectedItems[0].Tag as MediaQueue).Video[lstVideo.SelectedItems[0].Index];
-                    new Thread(Thread_LoadPropertiesVideo).Start(data);
+                    LoadPropertiesVideo(data);
                 }
                 catch (Exception ex)
                 {
@@ -570,12 +669,15 @@ namespace IFME
 
         private void DisplayProperties_Audio()
         {
+            if (suspendPropertyEvents)
+                return;
+
             if (lstAudio.SelectedItems.Count > 0)
             {
                 try
                 {
                     var data = (lstFile.SelectedItems[0].Tag as MediaQueue).Audio[lstAudio.SelectedItems[0].Index];
-                    new Thread(Thread_LoadPropertiesAudio).Start(data);
+                    LoadPropertiesAudio(data);
                 }
                 catch (Exception ex)
                 {
@@ -586,12 +688,15 @@ namespace IFME
 
         private void DisplayProperties_Subtitle()
         {
+            if (suspendPropertyEvents)
+                return;
+
             if (lstSub.SelectedItems.Count > 0)
             {
                 try
                 {
                     var data = (lstFile.SelectedItems[0].Tag as MediaQueue).Subtitle[lstSub.SelectedItems[0].Index];
-                    new Thread(Thread_LoadPropertiesSubtitle).Start(data);
+                    LoadPropertiesSubtitle(data);
                 }
                 catch (Exception ex)
                 {
@@ -602,13 +707,15 @@ namespace IFME
 
         private void DisplayProperties_Attachment()
         {
+            if (suspendPropertyEvents)
+                return;
+
             if (lstAttach.SelectedItems.Count > 0)
             {
                 try
                 {
                     var data = (lstFile.SelectedItems[0].Tag as MediaQueue).Attachment[lstAttach.SelectedItems[0].Index];
-                    new Thread(Thread_LoadPropertiesAttachment).Start(data);
-
+                    LoadPropertiesAttachment(data);
                 }
                 catch (Exception ex)
                 {
@@ -617,43 +724,47 @@ namespace IFME
             }
         }
 
-        private void Thread_InitializedTabs()
+        private void InitializeTabLayout()
         {
-            BeginInvoke((Action)delegate ()
+            // Force each tab page to build its control handles up front so the first
+            // real switch is instant. SelectedTab alone defers layout, so lay out explicitly
+            // instead of sleeping and hoping GDI+ caught up.
+            tabConfig.SuspendLayout();
+
+            foreach (TabPage item in tabConfig.TabPages)
             {
-                foreach (TabPage item in tabConfig.TabPages)
-                {
-                    tabConfig.SelectedTab = item;
-                    Thread.Sleep(100); // GDI+ is slow, so we need to wait for it to finish.
-                }
+                tabConfig.SelectedTab = item;
+                item.PerformLayout();
+            }
 
-                tabConfig.SelectedTab = tabConfigLog;
+            tabConfig.SelectedTab = tabConfigLog;
+            tabConfig.ResumeLayout(true);
 
-                cboProfile.Focus();
+            cboProfile.Focus();
 
-                if (OS.IsLinux)
-                {
-                    cboProfile.SelectedIndex = -1; // no profile for Linux
-                    cboVideoEncoder.SelectedValue = new Guid("deadbeef-0011-0011-0011-001100110011");
-                    cboAudioEncoder.SelectedValue = new Guid("deadface-f00d-f00d-f00d-f00df00df00d");
-                }
-                else
-                {
-                    cboProfile.SelectedIndex = cboProfile.Items.Count - 1;
-                }    
-            });
+            if (OS.IsLinux)
+            {
+                cboProfile.SelectedIndex = -1; // no profile for Linux
+                cboVideoEncoder.SelectedValue = new Guid("deadbeef-0011-0011-0011-001100110011");
+                cboAudioEncoder.SelectedValue = new Guid("deadface-f00d-f00d-f00d-f00df00df00d");
+            }
+            else
+            {
+                cboProfile.SelectedIndex = cboProfile.Items.Count - 1;
+            }
         }
 
-        private void Thread_LoadPropertiesVideo(object obj)
+        private void LoadPropertiesVideo(MediaQueueVideo data)
         {
-            Thread.Sleep(50);
+            if (data == null)
+                return;
 
-            var data = obj as MediaQueueVideo;
+            suspendPropertyEvents = true;
 
-            BeginInvoke((Action)delegate ()
+            try
             {
                 cboVideoLang.SelectedValue = data.Lang;
-                
+
                 cboVideoEncoder.SelectedValue = data.Encoder.Id;
                 cboVideoPreset.SelectedItem = data.Encoder.Preset;
                 cboVideoTune.SelectedItem = data.Encoder.Tune;
@@ -687,26 +798,30 @@ namespace IFME
                     item.SubItems[4].Text = cboVideoBitDepth.Text;
                     item.SubItems[5].Text = cboVideoPixFmt.Text;
                 }
-            });
+            }
+            finally
+            {
+                suspendPropertyEvents = false;
+            }
         }
 
-        private void Thread_LoadPropertiesAudio(object obj)
+        private void LoadPropertiesAudio(MediaQueueAudio data)
         {
-            Thread.Sleep(50);
+            if (data == null)
+                return;
 
-            var data = obj as MediaQueueAudio;
+            suspendPropertyEvents = true;
 
-            BeginInvoke((Action)delegate ()
+            try
             {
                 cboAudioLang.SelectedValue = data.Lang;
                 cboAudioEncoder.SelectedValue = data.Encoder.Id;
+
+                // Raises cboAudioMode_SelectedIndexChanged synchronously, which repopulates
+                // cboAudioQuality. The quality/sample/channel assignments below therefore
+                // run against the refreshed item list without needing a sleep in between.
                 cboAudioMode.SelectedIndex = data.Encoder.Mode;
-            });
 
-            Thread.Sleep(1);
-
-            BeginInvoke((Action)delegate ()
-            {
                 cboAudioQuality.SelectedItem = data.Encoder.Quality;
                 cboAudioSampleRate.SelectedValue = data.Encoder.SampleRate;
                 cboAudioChannel.SelectedValue = data.Encoder.Channel;
@@ -718,16 +833,21 @@ namespace IFME
                     item.SubItems[3].Text = cboAudioSampleRate.Text.Equals("0") ? "Auto" : cboAudioSampleRate.Text;
                     item.SubItems[4].Text = cboAudioChannel.Text.Equals("0") ? "Auto" : cboAudioChannel.Text;
                 }
-            });
+            }
+            finally
+            {
+                suspendPropertyEvents = false;
+            }
         }
 
-        private void Thread_LoadPropertiesSubtitle(object obj)
+        private void LoadPropertiesSubtitle(MediaQueueSubtitle data)
         {
-            Thread.Sleep(50);
+            if (data == null)
+                return;
 
-            var data = obj as MediaQueueSubtitle;
+            suspendPropertyEvents = true;
 
-            BeginInvoke((Action)delegate ()
+            try
             {
                 cboSubLang.SelectedValue = data.Lang;
 
@@ -735,24 +855,33 @@ namespace IFME
                 {
                     item.SubItems[2].Text = Language.FullName(data.Lang);
                 }
-            });
+            }
+            finally
+            {
+                suspendPropertyEvents = false;
+            }
         }
 
-        private void Thread_LoadPropertiesAttachment(object obj)
+        private void LoadPropertiesAttachment(MediaQueueAttachment data)
         {
-            Thread.Sleep(50);
+            if (data == null)
+                return;
 
-            var data = obj as MediaQueueAttachment;
+            suspendPropertyEvents = true;
 
-            BeginInvoke((Action)delegate ()
-            {                
+            try
+            {
                 foreach (ListViewItem item in lstAttach.SelectedItems)
                 {
                     item.SubItems[2].Text = data.Mime;
                 }
 
                 cboAttachMime.Text = data.Mime;
-            });
+            }
+            finally
+            {
+                suspendPropertyEvents = false;
+            }
         }
 
         private void ListViewItem_RefreshVideo()
