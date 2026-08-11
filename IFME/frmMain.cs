@@ -54,16 +54,16 @@ namespace IFME
 
             if (Plugins.Items.Audio.Count > 0)
             {
-                cboAudioEncoder.DataSource = new BindingSource(Plugins.Items.Audio.ToDictionary(p => p.Key, p => p.Value.Name), null);
                 cboAudioEncoder.DisplayMember = "Value";
                 cboAudioEncoder.ValueMember = "Key";
+                cboAudioEncoder.DataSource = new BindingSource(Plugins.Items.Audio.ToDictionary(p => p.Key, p => p.Value.Name), null);
             }
             
             if (Plugins.Items.Video.Count > 0)
             {
-                cboVideoEncoder.DataSource = new BindingSource(Plugins.Items.Video.ToDictionary(p => p.Key, p => p.Value.Name), null);
                 cboVideoEncoder.DisplayMember = "Value";
                 cboVideoEncoder.ValueMember = "Key";
+                cboVideoEncoder.DataSource = new BindingSource(Plugins.Items.Video.ToDictionary(p => p.Key, p => p.Value.Name), null);
             }
 
             cboVideoLang.DataSource = new BindingSource(Language.Codes, null);
@@ -781,7 +781,10 @@ namespace IFME
                 {
                     var enc = new MediaQueueVideoEncoder
                     {
-                        Id = new Guid(cboVideoEncoder.SelectedValue.ToString()),
+                        // Use the key already read from SelectedItem above. SelectedValue is
+                        // null while a DataSource is being swapped in (ValueMember not applied
+                        // yet), which crashed here when changing the output container.
+                        Id = key,
                         Preset = cboVideoPreset.Text,
                         Tune = cboVideoTune.Text,
                         Mode = cboVideoRateControl.SelectedIndex,
@@ -1646,7 +1649,9 @@ namespace IFME
             {
                 var enc = new MediaQueueAudioEncoder
                 {
-                    Id = new Guid($"{cboAudioEncoder.SelectedValue}"),
+                    // Same as the video handler: SelectedValue can be null mid-rebind, which
+                    // interpolated to "" and threw FormatException from the Guid constructor.
+                    Id = key,
                     Mode = 0,
                     Quality = temp.Audio.Mode[0].Default,
                     SampleRate = temp.Audio.SampleRateDefault,

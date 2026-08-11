@@ -1101,9 +1101,12 @@ namespace IFME
 
                 if (newDataSourceHash != currentDataSourceHash)
                 {
-                    cboVideoEncoder.DataSource = new BindingSource(newDataSource, null);
+                    // Members first: assigning DataSource raises SelectedIndexChanged
+                    // synchronously, and until ValueMember is applied SelectedValue returns
+                    // null even though SelectedItem is already populated.
                     cboVideoEncoder.DisplayMember = "Value";
                     cboVideoEncoder.ValueMember = "Key";
+                    cboVideoEncoder.DataSource = new BindingSource(newDataSource, null);
                 }
 
                 if (newDataSource.ContainsKey(idVideo))
@@ -1135,9 +1138,9 @@ namespace IFME
 
                 if (newDataSourceHash != currentDataSourceHash)
                 {
-                    cboAudioEncoder.DataSource = new BindingSource(newDataSource, null);
                     cboAudioEncoder.DisplayMember = "Value";
                     cboAudioEncoder.ValueMember = "Key";
+                    cboAudioEncoder.DataSource = new BindingSource(newDataSource, null);
                 }
 
                 if (newDataSource.ContainsKey(idAudio))
