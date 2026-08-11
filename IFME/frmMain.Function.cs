@@ -27,8 +27,28 @@ namespace IFME
     {
         // Guards against re-entrancy: assigning SelectedIndex/SelectedValue below raises
         // SelectedIndexChanged synchronously, and some of those handlers call back into
-        // DisplayProperties_*. Previously the BeginInvoke deferral hid this; now it is explicit.
+        // DisplayProperties_*.
         private bool suspendPropertyEvents;
+
+        /// <summary>
+        /// Queues a property-panel refresh to run once the current event chain has unwound.
+        ///
+        /// This deferral is load bearing, not cosmetic. cboVideoEncoder_SelectedIndexChanged
+        /// assigns cboVideoBitDepth / cboVideoPixFmt / cboVideoRes part way through its own
+        /// body, and each of those handlers calls back here. Running the refresh inline
+        /// re-enters the encoder handler and leaves the combo mid-rebind, so the outer frame
+        /// then reads a null SelectedValue and throws.
+        ///
+        /// The original code got the same ordering from a thread that slept 50 ms before
+        /// posting. Posting directly costs one message-loop turn instead.
+        /// </summary>
+        private void DeferPropertyLoad(Action load)
+        {
+            if (!IsHandleCreated || IsDisposed)
+                return;
+
+            BeginInvoke(load);
+        }
 
         private void Initialize_i18n()
         {
@@ -666,7 +686,7 @@ namespace IFME
                 try
                 {
                     var data = (lstFile.SelectedItems[0].Tag as MediaQueue).Video[lstVideo.SelectedItems[0].Index];
-                    LoadPropertiesVideo(data);
+                    DeferPropertyLoad(() => LoadPropertiesVideo(data));
                 }
                 catch (Exception ex)
                 {
@@ -685,7 +705,7 @@ namespace IFME
                 try
                 {
                     var data = (lstFile.SelectedItems[0].Tag as MediaQueue).Audio[lstAudio.SelectedItems[0].Index];
-                    LoadPropertiesAudio(data);
+                    DeferPropertyLoad(() => LoadPropertiesAudio(data));
                 }
                 catch (Exception ex)
                 {
@@ -704,7 +724,7 @@ namespace IFME
                 try
                 {
                     var data = (lstFile.SelectedItems[0].Tag as MediaQueue).Subtitle[lstSub.SelectedItems[0].Index];
-                    LoadPropertiesSubtitle(data);
+                    DeferPropertyLoad(() => LoadPropertiesSubtitle(data));
                 }
                 catch (Exception ex)
                 {
@@ -723,7 +743,7 @@ namespace IFME
                 try
                 {
                     var data = (lstFile.SelectedItems[0].Tag as MediaQueue).Attachment[lstAttach.SelectedItems[0].Index];
-                    LoadPropertiesAttachment(data);
+                    DeferPropertyLoad(() => LoadPropertiesAttachment(data));
                 }
                 catch (Exception ex)
                 {
