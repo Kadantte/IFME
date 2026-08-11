@@ -1,5 +1,6 @@
-﻿using System;
+using System;
 using System.Diagnostics;
+using System.Threading;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using IFME.OSManager;
@@ -8,20 +9,33 @@ namespace IFME
 {
 	internal class ProcessManager
 	{
-		private static List<int> ProcessId = new List<int>();
+		// Guarded by SyncRoot. Stop/Pause/Resume iterate a snapshot so they cannot
+		// throw InvalidOperationException when Run() adds or removes concurrently.
+		private static readonly HashSet<int> ProcessId = new HashSet<int>();
+		private static readonly object SyncRoot = new object();
+
+		private static CancellationTokenSource cancelSource = new CancellationTokenSource();
 
 		internal static bool IsPause = false;
 
+		/// <summary>
+		/// Cooperative cancellation for the current encoding job. Replaces Thread.Abort:
+		/// the pipeline checks this between stages and Run() kills the running child process.
+		/// </summary>
+		internal static CancellationToken Token => cancelSource.Token;
+
+		internal static bool IsCancelled => cancelSource.IsCancellationRequested;
+
 		private TimeSpan eta = new TimeSpan(0, 0, 0);
-        private List<double> recentFps;
-        private const int sampleSize = 5;
+		private List<double> recentFps;
+		private const int sampleSize = 5;
 
-        public ProcessManager()
-        {
-            recentFps = new List<double>();
-        }
+		public ProcessManager()
+		{
+			recentFps = new List<double>();
+		}
 
-        internal static int Start(string Command)
+		internal static int Start(string Command)
 		{
 			return new ProcessManager().Run(Command, string.Empty);
 		}
@@ -33,6 +47,9 @@ namespace IFME
 
 		private int Run(string Command, string WorkingDirectory)
 		{
+			// Don't launch anything else once the user has asked to stop.
+			Token.ThrowIfCancellationRequested();
+
 			var EnvId = RandomGen.String(7);
 
 			// replace double or more space with single space except in quote char (" ' `)
@@ -43,7 +60,7 @@ namespace IFME
 			var cmd = OS.IsWindows ? "cmd" : "bash";
 			var arg = OS.IsWindows ? $"/c %{EnvId}%" : $"-c 'eval ${EnvId}'";
 
-			Process proc = new Process
+			using (Process proc = new Process
 			{
 				StartInfo = new ProcessStartInfo(cmd, arg)
 				{
@@ -53,32 +70,72 @@ namespace IFME
 					RedirectStandardError = true,
 					RedirectStandardOutput = true
 				}
-			};
-
+			})
+			{
 #if DEBUG
-			frmMain.PrintLog($"[DEBG] Command Line: {Command}");
+				Report.Log($"[DEBG] Command Line: {Command}");
 #endif
 
-			proc.OutputDataReceived += Proc_DataReceived;
-			proc.ErrorDataReceived += Proc_DataReceived;
+				proc.OutputDataReceived += Proc_DataReceived;
+				proc.ErrorDataReceived += Proc_DataReceived;
 
-			proc.Start();
+				proc.Start();
 
-			ProcessId.Add(proc.Id);
+				lock (SyncRoot)
+					ProcessId.Add(proc.Id);
 
-			proc.BeginOutputReadLine();
-			proc.BeginErrorReadLine();
+				try
+				{
+					proc.BeginOutputReadLine();
+					proc.BeginErrorReadLine();
 
-			proc.WaitForExit();
+					// Poll instead of a blocking WaitForExit() so cancellation is observed
+					// promptly without aborting the thread.
+					while (!proc.WaitForExit(200))
+					{
+						if (Token.IsCancellationRequested)
+						{
+							TryKill(proc);
+							break;
+						}
+					}
 
-			ProcessId.Remove(proc.Id);
-			
-			return proc.ExitCode;
+					// Parameterless overload blocks until the async stdout/stderr
+					// handlers have drained, so no output is lost.
+					proc.WaitForExit();
+				}
+				finally
+				{
+					lock (SyncRoot)
+						ProcessId.Remove(proc.Id);
+
+					Environment.SetEnvironmentVariable(EnvId, null, EnvironmentVariableTarget.Process);
+				}
+
+				Token.ThrowIfCancellationRequested();
+
+				return proc.ExitCode;
+			}
+		}
+
+		private static void TryKill(Process proc)
+		{
+			try
+			{
+				if (!proc.HasExited)
+					ProcessEx.Terminate(proc.Id);
+			}
+			catch (Exception ex)
+			{
+				Report.Log($"[WARN] Unable to terminate process {proc.Id}: {ex.Message}");
+			}
 		}
 
 		private void Proc_DataReceived(object sender, DataReceivedEventArgs e)
 		{
-			if (frmMain.frmMainStatic == null)
+			// Nothing is listening (e.g. during plugin self-test at startup): skip the
+			// regex work entirely rather than parsing lines that will be discarded.
+			if (!Report.HasSink)
 				return;
 
 			if (!string.IsNullOrEmpty(e.Data))
@@ -87,11 +144,11 @@ namespace IFME
                 var tfm = Regex.Matches(e.Data, tf, RegexOptions.IgnoreCase);
                 if (tfm.Count > 0)
                 {
-                    if (tfm.Count > 0)
-                    {
-                        if (!int.TryParse(tfm[0].Value, out int rfc))
-                            MediaEncoding.RealFrameCount = rfc;
-                    }
+                    // Only overwrite the count when the encoder actually reported a usable
+                    // number; a failed parse used to clobber the value computed in
+                    // MediaEncoding with 0, which made the progress percentage divide by zero.
+                    if (int.TryParse(tfm[0].Value.Trim(), out int rfc) && rfc > 0)
+                        MediaEncoding.RealFrameCount = rfc;
 
                     return;
                 }
@@ -99,9 +156,9 @@ namespace IFME
                 var regexPattern = @"( \d+ bits )|( \d+ seconds)|(\d+/\d{3})|(size=[ ]{1,}\d+)|(frame[ ]{1,}\d+)|(\d+.\d+[ ]{1,}kb/s)|(\d+.\d+[ ]{1,}fps)|(\d+[ ]{1,}frames:\s\d+.\d+[ ]{1,}fps,\s\d+.\d+[ ]{1,}kb/s,\sGPU\s\d+%,\sVE\s\d+%)";
                 Match m = Regex.Match(e.Data, regexPattern, RegexOptions.IgnoreCase);
                 if (m.Success)
-                    frmMain.PrintProgress(e.Data);
+                    Report.Progress(e.Data);
                 else
-                    frmMain.PrintLog(e.Data);
+                    Report.Log(e.Data);
 
                 var patterns = new[]
 				{
@@ -112,7 +169,7 @@ namespace IFME
 					@"Encoding frame\s*(\d+)\s* ([\d\.]+) kbps\s* ([\d\.]+) fps" // SVT-AV1
                 };
 
-				foreach (var pattern in patterns) 
+				foreach (var pattern in patterns)
 				{
                     var match = Regex.Match(e.Data, pattern);
                     if (match.Success)
@@ -137,7 +194,12 @@ namespace IFME
                             speed = b;
                         }
 
-                        double percentage = (double)frame / MediaEncoding.RealFrameCount * 100;
+                        // Frame count is unknown for multi-pass and some sources; without
+                        // this guard the division produced Infinity and a garbage ETA.
+                        var totalFrames = MediaEncoding.RealFrameCount;
+                        var hasTotal = totalFrames > 0;
+
+                        double percentage = hasTotal ? (double)frame / totalFrames * 100 : 0;
 
                         if (percentage > 100)
                             percentage = 100; // Cap percentage at 100%
@@ -150,7 +212,7 @@ namespace IFME
                         }
 
                         // Calculate ETA
-                        if (recentFps.Count == sampleSize)
+                        if (hasTotal && recentFps.Count == sampleSize)
                         {
                             double averageFps = 0;
                             foreach (var fps in recentFps)
@@ -162,7 +224,11 @@ namespace IFME
 
                             if (averageFps > 0)
                             {
-                                int remainingFrames = MediaEncoding.RealFrameCount - frame;
+                                int remainingFrames = totalFrames - frame;
+
+                                if (remainingFrames < 0)
+                                    remainingFrames = 0;
+
                                 double remainingTime = remainingFrames / averageFps;
 
                                 if (remainingTime > TimeSpan.MaxValue.TotalSeconds)
@@ -180,13 +246,16 @@ namespace IFME
                                 }
                                 catch (Exception ex)
                                 {
-                                    frmMain.PrintLog($"[WARN] ETA Logic is crashed: {ex.Message}");
+                                    Report.Log($"[WARN] ETA Logic is crashed: {ex.Message}");
 
                                 }
                             }
                         }
 
-                        frmMain.PrintProgress($"[{percentage:0.00} %] Frame: {frame}, Bitrate: {bitrate:0} kb/s, Speed: {speed:0.00} fps, ETA: {eta:hh\\:mm\\:ss}");
+                        if (hasTotal)
+                            Report.Progress($"[{percentage:0.00} %] Frame: {frame}, Bitrate: {bitrate:0} kb/s, Speed: {speed:0.00} fps, ETA: {eta:hh\\:mm\\:ss}");
+                        else
+                            Report.Progress($"Frame: {frame}, Bitrate: {bitrate:0} kb/s, Speed: {speed:0.00} fps");
 
                         return;
                     }
@@ -194,22 +263,48 @@ namespace IFME
 			}
 		}
 
+		/// <summary>
+		/// Begin a fresh job: clears stale process ids and arms a new cancellation token.
+		/// </summary>
+		internal static void Reset()
+		{
+			lock (SyncRoot)
+				ProcessId.Clear();
+
+			// Deliberately not disposing the previous source: a worker from the last job may
+			// still be unwinding and reading its token, and Token throws once disposed.
+			// An unregistered CancellationTokenSource is cheap and collectable.
+			Interlocked.Exchange(ref cancelSource, new CancellationTokenSource());
+
+			IsPause = false;
+		}
+
 		internal static void Clear()
 		{
-			ProcessId.Clear();
+			lock (SyncRoot)
+				ProcessId.Clear();
 		}
 
 		internal static void Stop()
 		{
-			foreach (var pid in ProcessId)
+			cancelSource.Cancel();
+
+			foreach (var pid in Snapshot())
 			{
-				ProcessEx.Terminate(pid);
+				try
+				{
+					ProcessEx.Terminate(pid);
+				}
+				catch (Exception ex)
+				{
+					Report.Log($"[WARN] Unable to terminate process {pid}: {ex.Message}");
+				}
 			}
 		}
 
 		internal static void Pause()
 		{
-			foreach (var pid in ProcessId)
+			foreach (var pid in Snapshot())
 			{
 				ProcessEx.Pause(pid);
 			}
@@ -219,12 +314,22 @@ namespace IFME
 
 		internal static void Resume()
 		{
-			foreach (var pid in ProcessId)
+			foreach (var pid in Snapshot())
 			{
 				ProcessEx.Resume(pid);
 			}
 
 			IsPause = false;
+		}
+
+		private static int[] Snapshot()
+		{
+			lock (SyncRoot)
+			{
+				var copy = new int[ProcessId.Count];
+				ProcessId.CopyTo(copy);
+				return copy;
+			}
 		}
 
 		internal static void Donate()

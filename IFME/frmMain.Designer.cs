@@ -301,7 +301,7 @@
             // 
             this.chkSubHard.Location = new System.Drawing.Point(142, 6);
             this.chkSubHard.Name = "chkSubHard";
-            this.chkSubHard.Size = new System.Drawing.Size(256, 24);
+            this.chkSubHard.Size = new System.Drawing.Size(844, 24);
             this.chkSubHard.TabIndex = 5;
             this.chkSubHard.Text = "&Burn Subtitle (first stream is default)";
             this.chkSubHard.UseVisualStyleBackColor = true;
@@ -621,9 +621,9 @@
             // 
             // chkAudioMP4Compt
             // 
-            this.chkAudioMP4Compt.Location = new System.Drawing.Point(142, 6);
+            this.chkAudioMP4Compt.Location = new System.Drawing.Point(142, 0);
             this.chkAudioMP4Compt.Name = "chkAudioMP4Compt";
-            this.chkAudioMP4Compt.Size = new System.Drawing.Size(338, 24);
+            this.chkAudioMP4Compt.Size = new System.Drawing.Size(338, 36);
             this.chkAudioMP4Compt.TabIndex = 13;
             this.chkAudioMP4Compt.Text = "Smart Stream Copy (Change File Format)";
             this.chkAudioMP4Compt.UseVisualStyleBackColor = true;
@@ -1406,9 +1406,9 @@
             // 
             // chkVideoMP4Compt
             // 
-            this.chkVideoMP4Compt.Location = new System.Drawing.Point(142, 6);
+            this.chkVideoMP4Compt.Location = new System.Drawing.Point(142, 0);
             this.chkVideoMP4Compt.Name = "chkVideoMP4Compt";
-            this.chkVideoMP4Compt.Size = new System.Drawing.Size(338, 24);
+            this.chkVideoMP4Compt.Size = new System.Drawing.Size(338, 36);
             this.chkVideoMP4Compt.TabIndex = 12;
             this.chkVideoMP4Compt.Text = "Smart Stream Copy (Change File Format)";
             this.chkVideoMP4Compt.UseVisualStyleBackColor = true;

@@ -130,7 +130,7 @@ namespace IFME
 
             var lang = (KeyValuePair<string, string>)cboLanguage.SelectedItem;
 
-            lblLangAuthor.Text = String.Format(LangAuthorInfo, i18n.GetLangAuthor(lang.Key));
+            lblLangAuthor.Text = string.Format(LangAuthorInfo, i18n.GetLangAuthor(lang.Key));
         }
 
         private void btnOK_Click(object sender, EventArgs e)

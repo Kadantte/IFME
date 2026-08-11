@@ -6,6 +6,8 @@ using System.Globalization;
 
 using NDesk.Options;
 
+using IFME.OSManager;
+
 namespace IFME
 {
     static class Program
@@ -63,7 +65,37 @@ namespace IFME
             Environment.CurrentDirectory = Path.GetDirectoryName(Application.ExecutablePath);
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
+
+            if (!CheckCpuSupport())
+                return;
+
             Application.Run(new frmMain());
+        }
+
+        /// <summary>
+        /// Verifies required CPU instruction sets before the message loop starts. Doing this
+        /// inside the frmMain constructor was ineffective: Application.Exit() is a no-op
+        /// before Application.Run, so an unsupported CPU carried on into startup anyway.
+        /// </summary>
+        private static bool CheckCpuSupport()
+        {
+            if (!ArgsSkipAVX && !CPU.HasAVX)
+            {
+                MessageBox.Show(
+                    "AVX instruction set not detected. A modern CPU with AVX support is required to continue. Please ensure your hardware is compatible. The program will now exit.",
+                    "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+
+                return false;
+            }
+
+            if (!ArgsSkipAVX2 && !CPU.HasAVX2)
+            {
+                MessageBox.Show(
+                    "AVX2 instruction set not detected. A modern CPU with AVX2 support is required to continue. Please ensure your hardware is compatible.",
+                    "Warning", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+
+            return true;
         }
 	}
 }
