@@ -269,7 +269,7 @@ namespace IFME
                     catch (Exception ex)
                     {
                         // Report and carry on: one unreadable file must not abort the import.
-                        PrintLog(String.Format(i18nUI.Log("ErrorInfo"), Path.GetFileName(path), ex.Message));
+                        PrintLog(string.Format(i18nUI.Log("ErrorInfo"), Path.GetFileName(path), ex.Message));
                     }
 
                     worker.ReportProgress((int)(((float)(i + 1) / files.Length) * 100.0),
@@ -282,14 +282,14 @@ namespace IFME
                 var state = (object[])r.UserState;
 
                 frm.Progress = r.ProgressPercentage;
-                frm.Status = String.Format(i18nUI.Dialog("ImportStatus"), state[0], state[1], state[2]);
-                frm.Title = String.Format(i18nUI.Dialog("ImportTitle"), r.ProgressPercentage);
+                frm.Status = string.Format(i18nUI.Dialog("ImportStatus"), state[0], state[1], state[2]);
+                frm.Title = string.Format(i18nUI.Dialog("ImportTitle"), r.ProgressPercentage);
             };
 
             thread.RunWorkerCompleted += delegate (object o, RunWorkerCompletedEventArgs r)
             {
                 if (r.Error != null)
-                    PrintLog(String.Format(i18nUI.Log("ErrorInfo"), "ImportFiles()", r.Error.Message));
+                    PrintLog(string.Format(i18nUI.Log("ErrorInfo"), "ImportFiles()", r.Error.Message));
 
                 frm.Close();
                 frm.Dispose();
@@ -670,7 +670,7 @@ namespace IFME
                 }
                 catch (Exception ex)
                 {
-                    PrintLog(String.Format(i18nUI.Log("ErrorInfo"), "DisplayProperties_Video()", ex.Message));
+                    PrintLog(string.Format(i18nUI.Log("ErrorInfo"), "DisplayProperties_Video()", ex.Message));
                 }
             }
         }
@@ -689,7 +689,7 @@ namespace IFME
                 }
                 catch (Exception ex)
                 {
-                    PrintLog(String.Format(i18nUI.Log("ErrorInfo"), "DisplayProperties_Audio()", ex.Message));
+                    PrintLog(string.Format(i18nUI.Log("ErrorInfo"), "DisplayProperties_Audio()", ex.Message));
                 }
             }
         }
@@ -708,7 +708,7 @@ namespace IFME
                 }
                 catch (Exception ex)
                 {
-                    PrintLog(String.Format(i18nUI.Log("ErrorInfo"), "DisplayProperties_Subtitle()", ex.Message));
+                    PrintLog(string.Format(i18nUI.Log("ErrorInfo"), "DisplayProperties_Subtitle()", ex.Message));
                 }
             }
         }
@@ -727,7 +727,7 @@ namespace IFME
                 }
                 catch (Exception ex)
                 {
-                    PrintLog(String.Format(i18nUI.Log("ErrorInfo"), "DisplayProperties_Attachment()", ex.Message));
+                    PrintLog(string.Format(i18nUI.Log("ErrorInfo"), "DisplayProperties_Attachment()", ex.Message));
                 }
             }
         }

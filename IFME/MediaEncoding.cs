@@ -215,7 +215,7 @@ namespace IFME
             {
                 var item = queue.Audio[i];
 
-                Report.Status(String.Format(i18nUI.Status("EncodingAudio"), i));
+                Report.Status(string.Format(i18nUI.Status("EncodingAudio"), i));
 
                 if (Plugins.Items.Audio.TryGetValue(item.Encoder.Id, out PluginsAudio codec))
                 {
@@ -267,7 +267,7 @@ namespace IFME
 
                     if(queue.FastMuxAudio && !queue.Trim.Enable)
                     {
-                        Report.Status(String.Format(i18nUI.Status("EncodingAudioRemux"), i));
+                        Report.Status(string.Format(i18nUI.Status("EncodingAudioRemux"), i));
                         Report.Log($"[INFO] Fast Remuxing Audio...");
 
                         var tempName = $"audio{i:D4}_{item.Lang}.{IsCompatible(queue.OutputFormat)}";
@@ -309,7 +309,7 @@ namespace IFME
 
                 if (item.Info.Disposition_AttachedPic)
                 {
-                    Report.Status(String.Format(i18nUI.Status("ExtractThumb"), i));
+                    Report.Status(string.Format(i18nUI.Status("ExtractThumb"), i));
                     Report.Log($"[INFO] Extracting Thumbnail...");
 
                     var exts = item.Codec;
@@ -492,7 +492,7 @@ namespace IFME
                     // Copy Streams
                     if (codec.GUID.Equals(new Guid("00000000-0000-0000-0000-000000000000")))
                     {
-                        Report.Status(String.Format(i18nUI.Status("EncodingVideoCopy"), i));
+                        Report.Status(string.Format(i18nUI.Status("EncodingVideoCopy"), i));
                         Report.Log($"[INFO] Copying video stream...");
 
                         ProcessManager.Start(tempDir, $"\"{FFmpeg}\" -hide_banner -v error {vc.Args.Input} \"{item.FilePath}\" {vc.Args.UnPipe} {vc.Args.Output} {outencfile}");
@@ -502,7 +502,7 @@ namespace IFME
                     // MP4 Remux Test
                     if (queue.FastMuxVideo && !queue.Trim.Enable)
                     {
-                        Report.Status(String.Format(i18nUI.Status("EncodingVideoRemux"), i));
+                        Report.Status(string.Format(i18nUI.Status("EncodingVideoRemux"), i));
                         Report.Log($"[INFO] Fast Remuxing Video...");
 
                         var tempName = $"video{i:D4}_{item.Lang}.{IsCompatible(queue.OutputFormat)}";
@@ -558,7 +558,7 @@ namespace IFME
                     }
 
                     // Begin encoding
-                    Report.Status(String.Format(i18nUI.Status("EncodingVideo"), i));
+                    Report.Status(string.Format(i18nUI.Status("EncodingVideo"), i));
                     Report.Log($"[INFO] Encoding video file...");
 
                     var cmd_ff = $"-map 0:{item.Id} {ff_trim} {ff_yuv} -vf {string.Join(",", ff_vf)}";

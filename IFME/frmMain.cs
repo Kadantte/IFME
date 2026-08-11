@@ -201,7 +201,7 @@ namespace IFME
             }
             catch (Exception ex)
             {
-                PrintLog(String.Format(i18nUI.Log("ErrorInfo"), "RebuildBanner()", ex.Message));
+                PrintLog(string.Format(i18nUI.Log("ErrorInfo"), "RebuildBanner()", ex.Message));
             }
         }
 
@@ -243,7 +243,7 @@ namespace IFME
             }
             catch (Exception ex)
             {
-                PrintLog(String.Format(i18nUI.Log("ErrorInfo"), "ResizeFileColumns()", ex.Message));
+                PrintLog(string.Format(i18nUI.Log("ErrorInfo"), "ResizeFileColumns()", ex.Message));
             }
         }
 
@@ -711,7 +711,7 @@ namespace IFME
             }
             catch (Exception ex)
             {
-                PrintLog(String.Format(i18nUI.Log("ContainerNotSupportVideo"), ex.Message));
+                PrintLog(string.Format(i18nUI.Log("ContainerNotSupportVideo"), ex.Message));
                 return;
             }
 
@@ -1049,7 +1049,7 @@ namespace IFME
                 }
             }
 
-            var ib = new InputBox(String.Format(i18nUI.Dialog("CodecCommandLine1"), cboVideoEncoder.Text), i18nUI.Dialog("VideoEncoderMsg1"), cmd1);
+            var ib = new InputBox(string.Format(i18nUI.Dialog("CodecCommandLine1"), cboVideoEncoder.Text), i18nUI.Dialog("VideoEncoderMsg1"), cmd1);
             if (ib.ShowDialog() == DialogResult.OK)
             {
                 cmd1 = ib.ReturnValue;
@@ -1591,7 +1591,7 @@ namespace IFME
             }
             catch (Exception ex)
             {
-                PrintLog(String.Format(i18nUI.Log("ContainerNotSupportAudio"), ex.Message));
+                PrintLog(string.Format(i18nUI.Log("ContainerNotSupportAudio"), ex.Message));
                 return;
             }
             
@@ -1853,7 +1853,7 @@ namespace IFME
                 }
             }
 
-            var ib = new InputBox(String.Format(i18nUI.Dialog("CodecCommandLine1"), cboAudioEncoder.Text), i18nUI.Dialog("AudioEncoderMsg1"), cmd1);
+            var ib = new InputBox(string.Format(i18nUI.Dialog("CodecCommandLine1"), cboAudioEncoder.Text), i18nUI.Dialog("AudioEncoderMsg1"), cmd1);
             if (ib.ShowDialog() == DialogResult.OK)
             {
                 cmd1 = ib.ReturnValue;
@@ -2722,12 +2722,12 @@ namespace IFME
                     {
                         Extensions.DirectoryCopy(tempSes, AppPath.Combine(outputPath, "[Muxing Failed]", $"{saveFileName}"), true);
                         PrintLog(i18nUI.Log("MuxingFailed"));
-                        PrintLog(String.Format(i18nUI.Log("FFmpegReturnCode"), errCodeMux));
+                        PrintLog(string.Format(i18nUI.Log("FFmpegReturnCode"), errCodeMux));
                     }
                     else
                     {
                         PrintLog(i18nUI.Log("MuxingSuccess"));
-                        PrintLog(String.Format(i18nUI.Log("FFmpegReturnCode"), errCodeMux));
+                        PrintLog(string.Format(i18nUI.Log("FFmpegReturnCode"), errCodeMux));
                     }
 
                     // Delete Temporary Session Folder
@@ -2740,7 +2740,7 @@ namespace IFME
                     });
 
                     SetRowStatus(id, i18nUI.Status("Done"),
-                        String.Format(i18nUI.Status("Complete"), $"{DateTime.Now.Subtract(tt):dd\\:hh\\:mm\\:ss}"));
+                        string.Format(i18nUI.Status("Complete"), $"{DateTime.Now.Subtract(tt):dd\\:hh\\:mm\\:ss}"));
                 }
                 else
                 {
@@ -2763,7 +2763,7 @@ namespace IFME
 
             if (e.Error != null)
             {
-                PrintLog(String.Format(i18nUI.Log("ErrorInfo"), "Encoding", e.Error.Message));
+                PrintLog(string.Format(i18nUI.Log("ErrorInfo"), "Encoding", e.Error.Message));
             }
 
             if (e.Cancelled)
