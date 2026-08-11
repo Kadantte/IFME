@@ -153,6 +153,43 @@ namespace IFME
         private Image bannerLeft;
         private Image bannerRight;
 
+        private float uiScale;
+
+        /// <summary>
+        /// UI scale factor where 1.0 is 96 DPI.
+        ///
+        /// Deliberately uses Graphics.DpiX rather than Control.DeviceDpi. DeviceDpi is
+        /// .NET Framework 4.7+ and Mono's System.Windows.Forms does not implement it, so
+        /// merely referencing it threw MissingMethodException under Mono. Note that a
+        /// runtime OS check would not have been enough: Mono raised it while compiling the
+        /// calling method, before any guard could run. The API has to be absent entirely.
+        /// </summary>
+        private float GetUiScale()
+        {
+            if (uiScale > 0)
+                return uiScale;
+
+            // SizeChanged fires from the constructor before the handle exists. Return the
+            // neutral scale without caching so the real value is resolved later.
+            if (!IsHandleCreated)
+                return 1f;
+
+            try
+            {
+                using (var g = CreateGraphics())
+                {
+                    if (g.DpiX > 0)
+                        uiScale = g.DpiX / 96f;
+                }
+            }
+            catch (Exception)
+            {
+                uiScale = 1f;
+            }
+
+            return uiScale > 0 ? uiScale : 1f;
+        }
+
         private void frmMain_SizeChanged(object sender, EventArgs e)
         {
             RebuildBanner();
@@ -219,7 +256,7 @@ namespace IFME
                 if (available <= 0)
                     return;
 
-                var dpi = DeviceDpi / 96.0;
+                var dpi = GetUiScale();
 
                 var typeW = (int)(90 * dpi);
                 var durW = (int)(72 * dpi);
