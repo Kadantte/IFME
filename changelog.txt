@@ -20,6 +20,8 @@ Version 8.7.0 (Mezame no Uta)
 [Update] Encoding engine no longer references the interface at all, it reports through a small interface instead. Groundwork for headless and command line operation.
 [Update] Timers, cached artwork and the splash image are now disposed on close.
 [Update] Removed BackgroundWorker2, its Thread.Abort based cancellation is unsupported on modern .NET and blocked any future runtime upgrade.
+[Update] Reworded the English (en-US) interface text throughout: plainer wording, consistent terminology, and clearer explanations of what each option actually does. Deinterlace method names now describe their real effect on frame rate.
+[Update] Removed duplicate Alt-key shortcuts on the Video and Audio tabs, where Alt+R, Alt+F, Alt+O and Alt+D each triggered several controls.
 [Update] (Release/Windows) FFmpeg git-2026-07-12-a09be9b
 [Update] (Release/Windows) SVT-AV1 4.2.0-73-gfb0ed7e59
 [Update] (Release/Windows) rigaya QSVEnc 8.26
