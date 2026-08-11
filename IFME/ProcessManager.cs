@@ -73,7 +73,7 @@ namespace IFME
 			})
 			{
 #if DEBUG
-				frmMain.PrintLog($"[DEBG] Command Line: {Command}");
+				Report.Log($"[DEBG] Command Line: {Command}");
 #endif
 
 				proc.OutputDataReceived += Proc_DataReceived;
@@ -127,13 +127,15 @@ namespace IFME
 			}
 			catch (Exception ex)
 			{
-				frmMain.PrintLog($"[WARN] Unable to terminate process {proc.Id}: {ex.Message}");
+				Report.Log($"[WARN] Unable to terminate process {proc.Id}: {ex.Message}");
 			}
 		}
 
 		private void Proc_DataReceived(object sender, DataReceivedEventArgs e)
 		{
-			if (frmMain.frmMainStatic == null)
+			// Nothing is listening (e.g. during plugin self-test at startup): skip the
+			// regex work entirely rather than parsing lines that will be discarded.
+			if (!Report.HasSink)
 				return;
 
 			if (!string.IsNullOrEmpty(e.Data))
@@ -154,9 +156,9 @@ namespace IFME
                 var regexPattern = @"( \d+ bits )|( \d+ seconds)|(\d+/\d{3})|(size=[ ]{1,}\d+)|(frame[ ]{1,}\d+)|(\d+.\d+[ ]{1,}kb/s)|(\d+.\d+[ ]{1,}fps)|(\d+[ ]{1,}frames:\s\d+.\d+[ ]{1,}fps,\s\d+.\d+[ ]{1,}kb/s,\sGPU\s\d+%,\sVE\s\d+%)";
                 Match m = Regex.Match(e.Data, regexPattern, RegexOptions.IgnoreCase);
                 if (m.Success)
-                    frmMain.PrintProgress(e.Data);
+                    Report.Progress(e.Data);
                 else
-                    frmMain.PrintLog(e.Data);
+                    Report.Log(e.Data);
 
                 var patterns = new[]
 				{
@@ -244,16 +246,16 @@ namespace IFME
                                 }
                                 catch (Exception ex)
                                 {
-                                    frmMain.PrintLog($"[WARN] ETA Logic is crashed: {ex.Message}");
+                                    Report.Log($"[WARN] ETA Logic is crashed: {ex.Message}");
 
                                 }
                             }
                         }
 
                         if (hasTotal)
-                            frmMain.PrintProgress($"[{percentage:0.00} %] Frame: {frame}, Bitrate: {bitrate:0} kb/s, Speed: {speed:0.00} fps, ETA: {eta:hh\\:mm\\:ss}");
+                            Report.Progress($"[{percentage:0.00} %] Frame: {frame}, Bitrate: {bitrate:0} kb/s, Speed: {speed:0.00} fps, ETA: {eta:hh\\:mm\\:ss}");
                         else
-                            frmMain.PrintProgress($"Frame: {frame}, Bitrate: {bitrate:0} kb/s, Speed: {speed:0.00} fps");
+                            Report.Progress($"Frame: {frame}, Bitrate: {bitrate:0} kb/s, Speed: {speed:0.00} fps");
 
                         return;
                     }
@@ -269,8 +271,10 @@ namespace IFME
 			lock (SyncRoot)
 				ProcessId.Clear();
 
-			var old = Interlocked.Exchange(ref cancelSource, new CancellationTokenSource());
-			old?.Dispose();
+			// Deliberately not disposing the previous source: a worker from the last job may
+			// still be unwinding and reading its token, and Token throws once disposed.
+			// An unregistered CancellationTokenSource is cheap and collectable.
+			Interlocked.Exchange(ref cancelSource, new CancellationTokenSource());
 
 			IsPause = false;
 		}
@@ -293,7 +297,7 @@ namespace IFME
 				}
 				catch (Exception ex)
 				{
-					frmMain.PrintLog($"[WARN] Unable to terminate process {pid}: {ex.Message}");
+					Report.Log($"[WARN] Unable to terminate process {pid}: {ex.Message}");
 				}
 			}
 		}

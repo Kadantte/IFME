@@ -8,6 +8,27 @@ namespace IFME
 {
     class VSDesignerBugFixB { }
 
+    /// <summary>
+    /// Adapts the form to the engine's reporting contract. The engine only knows about
+    /// <see cref="IEncodeReporter"/>, so nothing in MediaEncoding or ProcessManager
+    /// references a Form type any more.
+    /// </summary>
+    internal sealed class FormEncodeReporter : IEncodeReporter
+    {
+        private readonly frmMain form;
+
+        public FormEncodeReporter(frmMain form)
+        {
+            this.form = form;
+        }
+
+        public void Log(string message) => frmMain.PrintLog(message);
+
+        public void Status(int queueIndex, string text) => frmMain.EnqueueStatus(queueIndex, text);
+
+        public void Progress(int queueIndex, string text) => frmMain.EnqueueProgress(queueIndex, text);
+    }
+
     public partial class frmMain
     {
         internal static frmMain frmMainStatic = null;
@@ -76,11 +97,14 @@ namespace IFME
         /// </summary>
         private void TrimConsole()
         {
-            if (rtfConsole.Lines.Length <= LogMaxLines)
+            // Cache: every Lines access rebuilds the whole array.
+            var lines = rtfConsole.Lines;
+
+            if (lines.Length <= LogMaxLines)
                 return;
 
             var keep = new string[LogTrimToLines];
-            Array.Copy(rtfConsole.Lines, rtfConsole.Lines.Length - LogTrimToLines, keep, 0, LogTrimToLines);
+            Array.Copy(lines, lines.Length - LogTrimToLines, keep, 0, LogTrimToLines);
             rtfConsole.Lines = keep;
         }
 
@@ -134,24 +158,34 @@ namespace IFME
             frmMainStatic?.logQueue.Enqueue(value);
         }
 
-        public static void PrintProgress(string value)
+        internal static void EnqueueProgress(int queueIndex, string value)
         {
             var form = frmMainStatic;
 
             if (form == null)
                 return;
 
-            form.pendingProgress[MediaEncoding.CurrentIndex] = value;
+            form.pendingProgress[queueIndex] = value;
+        }
+
+        internal static void EnqueueStatus(int queueIndex, string value)
+        {
+            var form = frmMainStatic;
+
+            if (form == null)
+                return;
+
+            form.pendingStatus[queueIndex] = value;
+        }
+
+        public static void PrintProgress(string value)
+        {
+            EnqueueProgress(MediaEncoding.CurrentIndex, value);
         }
 
         public static void PrintStatus(string value)
         {
-            var form = frmMainStatic;
-
-            if (form == null)
-                return;
-
-            form.pendingStatus[MediaEncoding.CurrentIndex] = value;
+            EnqueueStatus(MediaEncoding.CurrentIndex, value);
         }
     }
 }

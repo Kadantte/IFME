@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Threading;
@@ -19,7 +20,10 @@ namespace IFME
                 if (OS.IsProgramInPath("ffmpeg"))
                     return "ffmpeg";
                 else
-                    return AppPath.Combine(Environment.CurrentDirectory, "Plugins", $"ffmpeg{Arch}", "ffmpeg");
+                    // AppPath.Combine already resolves relative parts against the application
+                    // base directory. Seeding it with CurrentDirectory made bundled plugin
+                    // lookup depend on the process working directory, which a file dialog can move.
+                    return AppPath.Combine("Plugins", $"ffmpeg{Arch}", "ffmpeg");
 
             }
         }
@@ -31,19 +35,72 @@ namespace IFME
                 if (OS.IsProgramInPath("MP4Box"))
                     return "MP4Box";
                 else
-                    return AppPath.Combine(Environment.CurrentDirectory, "Plugins", "mp4box", "MP4Box");
+                    return AppPath.Combine("Plugins", "mp4box", "MP4Box");
             }
         }
 
         private static bool IsExitError(int ExitCode) => ExitCode <= -1 || ExitCode == 1;
         private static string IsCompatible(FileContainer value) => value.GetEnumMemberValue().ToLower();
 
+        /// <summary>
+        /// Waits until a file can be opened exclusively, i.e. the encoder that produced it
+        /// has actually released its handle. Replaces the fixed Thread.Sleep guesses that
+        /// cost dead time on every file and still gave no guarantee.
+        /// </summary>
+        private static bool WaitForFileReady(string path, int timeoutMs = 30000)
+        {
+            var sw = Stopwatch.StartNew();
+
+            while (sw.ElapsedMilliseconds < timeoutMs)
+            {
+                if (ProcessManager.IsCancelled)
+                    return false;
+
+                try
+                {
+                    if (!File.Exists(path))
+                    {
+                        Thread.Sleep(25);
+                        continue;
+                    }
+
+                    using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None))
+                    {
+                        if (fs.Length > 0)
+                            return true;
+                    }
+
+                    Thread.Sleep(25);
+                }
+                catch (IOException)
+                {
+                    Thread.Sleep(25); // still locked by the encoder
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    Thread.Sleep(25);
+                }
+            }
+
+            Report.Log($"[WARN] Timed out waiting for '{Path.GetFileName(path)}' to be released.");
+            return false;
+        }
+
+        /// <summary>
+        /// Waits for every file matching a pattern in a directory to be readable.
+        /// </summary>
+        private static void WaitForFilesReady(string dir, string pattern, int timeoutMs = 30000)
+        {
+            foreach (var file in Directory.GetFiles(dir, pattern))
+                WaitForFileReady(file, timeoutMs);
+        }
+
         internal static void Extract(MediaQueue queue, string tempDir)
         {
             // Dump Metadata
-            frmMain.PrintStatus(i18nUI.Status("Extracting"));
+            Report.Status(i18nUI.Status("Extracting"));
 
-            frmMain.PrintLog("[INFO] Extracting metadata...");
+            Report.Log("[INFO] Extracting metadata...");
             ProcessManager.Start(tempDir, $"\"{FFmpeg}\" -hide_banner -v error -stats -i \"{queue.FilePath}\" -f ffmetadata metadata.ini -y");
 
             if (queue.Video.Count == 0)
@@ -51,14 +108,14 @@ namespace IFME
 
             if (queue.HardSub)
             {
-                frmMain.PrintLog("[INFO] Burn subtitle is enable, thus font extracting is required for proper render");
+                Report.Log("[INFO] Burn subtitle is enable, thus font extracting is required for proper render");
             }
             else if (queue.Subtitle.Count == 0 && queue.Attachment.Count == 0)
             {
                 return;
             }
 
-            frmMain.PrintLog("[INFO] Extracting subtitle file...");
+            Report.Log("[INFO] Extracting subtitle file...");
 
             for (int i = 0; i < queue.Subtitle.Count; i++)
             {
@@ -95,7 +152,7 @@ namespace IFME
                     }
                 }
 
-                frmMain.PrintLog("[INFO] Formalizing Subtitle File...");
+                Report.Log("[INFO] Formalizing Subtitle File...");
 
                 if (string.Equals("ass", fmt, StringComparison.InvariantCultureIgnoreCase))
                 {
@@ -118,7 +175,7 @@ namespace IFME
                 }
             }
 
-            frmMain.PrintLog("[INFO] Extracting embeded attachment...");
+            Report.Log("[INFO] Extracting embeded attachment...");
             var tempDirFont = AppPath.Combine(tempDir, "attachment");
             for (int i = 0; i < queue.Attachment.Count; i++)
             {
@@ -158,14 +215,14 @@ namespace IFME
             {
                 var item = queue.Audio[i];
 
-                frmMain.PrintStatus(String.Format(i18nUI.Status("EncodingAudio"), i));
+                Report.Status(String.Format(i18nUI.Status("EncodingAudio"), i));
 
                 if (Plugins.Items.Audio.TryGetValue(item.Encoder.Id, out PluginsAudio codec))
                 {
-                    frmMain.PrintLog("[INFO] Encoding audio file...");
+                    Report.Log("[INFO] Encoding audio file...");
 
                     if (queue.Trim.Enable)
-                        frmMain.PrintStatus($"Seeking audio file to {queue.Trim.Start}");
+                        Report.Status($"Seeking audio file to {queue.Trim.Start}");
 
                     var ac = codec.Audio;
                     var md = item.Encoder.Mode;
@@ -187,7 +244,7 @@ namespace IFME
 
                     if (!ac.Mode[md].MultiChannelSupport) // Mode didn't support MultiChannel, for example eSBR on exhale. Down-mixing to stereo
                     {
-                        frmMain.PrintLog($"[WARN] {codec.Name}, {codec.Audio.Mode[md].Name} doesn't support Multi Channel...");
+                        Report.Log($"[WARN] {codec.Name}, {codec.Audio.Mode[md].Name} doesn't support Multi Channel...");
 
                         if (item.Info.Channel >= 2)
                             ch = $"{ac.ChannelArgs} 2";
@@ -195,7 +252,7 @@ namespace IFME
 
                     if (!ac.Mode[md].MonoSupport) // Some audio encode mode doesn't support Mono, so, need to up-mixing to stereo
                     {
-                        frmMain.PrintLog($"[WARN] {codec.Name}, {codec.Audio.Mode[md].Name} doesn't support Mono Channel...");
+                        Report.Log($"[WARN] {codec.Name}, {codec.Audio.Mode[md].Name} doesn't support Mono Channel...");
 
                         if (item.Info.Channel == 1)
                             ch = $"{ac.ChannelArgs} 2";
@@ -203,15 +260,15 @@ namespace IFME
 
                     if (ac.Mode[md].SingleChannelOnly)
                     {
-                        frmMain.PrintLog($"[WARN] {codec.Name}, {codec.Audio.Mode[md].Name} only support Mono Channel...");
+                        Report.Log($"[WARN] {codec.Name}, {codec.Audio.Mode[md].Name} only support Mono Channel...");
 
                         ch = $"-ac 1";
                     }
 
                     if(queue.FastMuxAudio && !queue.Trim.Enable)
                     {
-                        frmMain.PrintStatus(String.Format(i18nUI.Status("EncodingAudioRemux"), i));
-                        frmMain.PrintLog($"[INFO] Fast Remuxing Audio...");
+                        Report.Status(String.Format(i18nUI.Status("EncodingAudioRemux"), i));
+                        Report.Log($"[INFO] Fast Remuxing Audio...");
 
                         var tempName = $"audio{i:D4}_{item.Lang}.{IsCompatible(queue.OutputFormat)}";
 
@@ -223,7 +280,7 @@ namespace IFME
                         if (!IsExitError(exitCode))
                             continue;
 
-                        frmMain.PrintLog($"[INFO] Remuxing incompatible codec require to re-encode to compatible one... Exit Code {exitCode}");
+                        Report.Log($"[INFO] Remuxing incompatible codec require to re-encode to compatible one... Exit Code {exitCode}");
                         File.Delete(AppPath.Combine(tempDir, tempName));
                     }
 
@@ -252,8 +309,8 @@ namespace IFME
 
                 if (item.Info.Disposition_AttachedPic)
                 {
-                    frmMain.PrintStatus(String.Format(i18nUI.Status("ExtractThumb"), i));
-                    frmMain.PrintLog($"[INFO] Extracting Thumbnail...");
+                    Report.Status(String.Format(i18nUI.Status("ExtractThumb"), i));
+                    Report.Log($"[INFO] Extracting Thumbnail...");
 
                     var exts = item.Codec;
 
@@ -269,7 +326,7 @@ namespace IFME
                     continue; // skip encode video when choosing audio only
 
                 if (queue.Trim.Enable)
-                    frmMain.PrintStatus($"Seeking video file to {queue.Trim.Start}");
+                    Report.Status($"Seeking video file to {queue.Trim.Start}");
 
                 if (Plugins.Items.Video.TryGetValue(item.Encoder.Id, out PluginsVideo codec))
                 {
@@ -435,8 +492,8 @@ namespace IFME
                     // Copy Streams
                     if (codec.GUID.Equals(new Guid("00000000-0000-0000-0000-000000000000")))
                     {
-                        frmMain.PrintStatus(String.Format(i18nUI.Status("EncodingVideoCopy"), i));
-                        frmMain.PrintLog($"[INFO] Copying video stream...");
+                        Report.Status(String.Format(i18nUI.Status("EncodingVideoCopy"), i));
+                        Report.Log($"[INFO] Copying video stream...");
 
                         ProcessManager.Start(tempDir, $"\"{FFmpeg}\" -hide_banner -v error {vc.Args.Input} \"{item.FilePath}\" {vc.Args.UnPipe} {vc.Args.Output} {outencfile}");
                         continue;
@@ -445,8 +502,8 @@ namespace IFME
                     // MP4 Remux Test
                     if (queue.FastMuxVideo && !queue.Trim.Enable)
                     {
-                        frmMain.PrintStatus(String.Format(i18nUI.Status("EncodingVideoRemux"), i));
-                        frmMain.PrintLog($"[INFO] Fast Remuxing Video...");
+                        Report.Status(String.Format(i18nUI.Status("EncodingVideoRemux"), i));
+                        Report.Log($"[INFO] Fast Remuxing Video...");
 
                         var tempName = $"video{i:D4}_{item.Lang}.{IsCompatible(queue.OutputFormat)}";
 
@@ -454,17 +511,17 @@ namespace IFME
 
                         if (new FileInfo(AppPath.Combine(tempDir, tempName)).Length <= 8192)
                         {
-                            frmMain.PrintLog($"[ERR ] Fast Remux is complete but remuxed file is corrupted... Exit Code {exitCode}");
+                            Report.Log($"[ERR ] Fast Remux is complete but remuxed file is corrupted... Exit Code {exitCode}");
                             exitCode = 1;
                         }
 
                         if (!IsExitError(exitCode))
                         {
-                            frmMain.PrintLog($"[ O K ] Fast Remux is complete... Exit Code {exitCode}");
+                            Report.Log($"[ O K ] Fast Remux is complete... Exit Code {exitCode}");
                             continue;
                         }
 
-                        frmMain.PrintLog($"[WARN] Remuxing incompatible codec require to re-encode to compatible one... Exit Code {exitCode}");
+                        Report.Log($"[WARN] Remuxing incompatible codec require to re-encode to compatible one... Exit Code {exitCode}");
                         File.Delete(AppPath.Combine(tempDir, tempName));
                     }
 
@@ -501,8 +558,8 @@ namespace IFME
                     }
 
                     // Begin encoding
-                    frmMain.PrintStatus(String.Format(i18nUI.Status("EncodingVideo"), i));
-                    frmMain.PrintLog($"[INFO] Encoding video file...");
+                    Report.Status(String.Format(i18nUI.Status("EncodingVideo"), i));
+                    Report.Log($"[INFO] Encoding video file...");
 
                     var cmd_ff = $"-map 0:{item.Id} {ff_trim} {ff_yuv} -vf {string.Join(",", ff_vf)}";
 
@@ -515,7 +572,7 @@ namespace IFME
                         var p = 1;
                         var pass = string.Empty;
 
-                        frmMain.PrintLog("[WARN] Frame count is disable for Multi-pass encoding, Avoid inconsistent across multi-pass.");
+                        Report.Log("[WARN] Frame count is disable for Multi-pass encoding, Avoid inconsistent across multi-pass.");
 
                         do
                         {
@@ -527,7 +584,7 @@ namespace IFME
                             if (p == item.Encoder.MultiPass)
                                 pass = vc.Args.PassLast;
 
-                            frmMain.PrintLog($"[INFO] Multi-pass encoding: {p} of {item.Encoder.MultiPass}");
+                            Report.Log($"[INFO] Multi-pass encoding: {p} of {item.Encoder.MultiPass}");
 
                             if (vc.Args.Pipe)
                                 ProcessManager.Start(tempDir, $"\"{FFmpeg}\" -hide_banner -v error {ff_infps} -i \"{item.FilePath}\" {cmd_ff} {ff_rawcodec} {item.Quality.Command} - | \"{en}\" {vc.Args.Y4M} {vc.Args.Input} {cmd_en} {en_preset} {en_tune} {en_mode} {vc.Args.Command} {item.Encoder.Command} {pass} {vc.Args.Output} {outencfile}");
@@ -539,7 +596,8 @@ namespace IFME
 
                             ++p;
 
-                            Thread.Sleep(1500);
+                            // Let the encoder release the output before the next pass reads it.
+                            WaitForFileReady(AppPath.Combine(tempDir, outencfile));
 
                         } while (p <= item.Encoder.MultiPass);
                     }
@@ -550,12 +608,13 @@ namespace IFME
                         else
                             ProcessManager.Start(tempDir, $"\"{en}\" {ff_infps} {vc.Args.Input} \"{item.FilePath}\" {cmd_ff_en} {en_preset} {en_tune} {en_mode} {vc.Args.UnPipe} {item.Encoder.Command} {vc.Args.Command} {vc.Args.Output} {outencfile}");
 
-                        Thread.Sleep(1500);
+                        // MP4Box / File.Move below need the encoder's handle released first.
+                        WaitForFileReady(AppPath.Combine(tempDir, outencfile));
                     }
 
                     // Raw file dont have pts (time), need to remux
-                    frmMain.PrintStatus(i18nUI.Status("Restructuring"));
-                    frmMain.PrintLog($"[INFO] Restructure RAW video file...");
+                    Report.Status(i18nUI.Status("Restructuring"));
+                    Report.Log($"[INFO] Restructure RAW video file...");
 
                     if (vc.RawOutput)
                     {
@@ -595,15 +654,16 @@ namespace IFME
 
             var outFile = AppPath.Combine(saveDir, saveFile);
 
-            frmMain.PrintStatus(i18nUI.Status("Repacking"));
-            frmMain.PrintLog($"[INFO] Multiplexing encoded files into single file...");
+            Report.Status(i18nUI.Status("Repacking"));
+            Report.Log($"[INFO] Multiplexing encoded files into single file...");
 
             if (!Directory.Exists(saveDir))
             {
                 Directory.CreateDirectory(saveDir);
             }
 
-            Thread.Sleep(500); // Wait NTFS finish updating the content
+            // Every produced stream must be fully flushed and unlocked before muxing.
+            WaitForFilesReady(tempDir, "*");
 
             foreach (var video in Directory.GetFiles(tempDir, "video*"))
             {

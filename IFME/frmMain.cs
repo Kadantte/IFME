@@ -27,6 +27,10 @@ namespace IFME
 
             frmMainStatic = this;
 
+            // Point the encoding engine at this form. Without this call the engine still
+            // runs, it just reports into a null sink -- which is what a CLI build wants.
+            Report.Use(new FormEncodeReporter(this));
+
             InitializeComponent();
 
             Icon = Icon.ExtractAssociatedIcon(Assembly.GetExecutingAssembly().Location);
@@ -132,6 +136,7 @@ namespace IFME
             bannerRight?.Dispose();
             bannerRight = null;
 
+            Report.Use(null);
             frmMainStatic = null;
 
             base.OnFormClosed(e);
@@ -438,7 +443,6 @@ namespace IFME
             if (lstFile.SelectedItems.Count > 0)
             {
                 var data = lstFile.SelectedItems[0].Tag as MediaQueue;
-                var isImgSq = false;
 
                 // Profile
                 if (data.ProfileId >= 0)

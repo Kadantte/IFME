@@ -157,15 +157,19 @@ namespace IFME
                 exts += extsAtt;
             }
 
-            var ofd = new OpenFileDialog
+            // RestoreDirectory keeps the process working directory stable, so relative
+            // plugin lookups are not affected by wherever the user browsed to.
+            using (var ofd = new OpenFileDialog
             {
                 Filter = exts += "All types|*.*",
                 FilterIndex = 1,
-                Multiselect = multiSelect
-            };
-
-            if (ofd.ShowDialog() == DialogResult.OK)
-                return ofd.FileNames;
+                Multiselect = multiSelect,
+                RestoreDirectory = true
+            })
+            {
+                if (ofd.ShowDialog() == DialogResult.OK)
+                    return ofd.FileNames;
+            }
 
             return Array.Empty<string>();
         }
@@ -245,6 +249,10 @@ namespace IFME
 
                 for (int i = 0; i < files.Length; i++)
                 {
+                    // Abandon the import if the window went away mid-run.
+                    if (IsDisposed || !IsHandleCreated)
+                        return;
+
                     var path = files[i];
 
                     // The expensive part (ffprobe via FFmpeg.MediaInfo) genuinely runs here,
